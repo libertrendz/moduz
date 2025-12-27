@@ -30,7 +30,10 @@ returns uuid
 language sql
 stable
 as $$
-  select nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'empresa_id'
+  select nullif(
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'empresa_id'),
+    ''
+  )::uuid
 $$;
 
 create or replace function public.auth_papel()
