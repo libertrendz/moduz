@@ -25,12 +25,13 @@ Se algo não está aqui, **não existe oficialmente**.
 
 ## Core (MVP)
 **Tabelas**
-- (por definir) `empresas`
-- (por definir) `profiles`
-- (por definir) `modules_enabled`
-- (por definir) `settings`
-- (por definir) `docs`
-- (por definir) `audit_log`
+- empresas
+- profiles
+- modules_enabled
+- settings
+- docs
+- audit_log
+- helpers tg_set_updated_at, auth_empresa_id, auth_papel
 
 **Funções/RPCs**
 - (por definir) `auth_empresa_id()`
