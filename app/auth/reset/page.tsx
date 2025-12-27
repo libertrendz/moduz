@@ -4,20 +4,14 @@
  * Arquivo: app/auth/reset/page.tsx
  * Módulo: Core (Auth)
  * Etapa: Core Runtime
- * Descrição: Finaliza reset de palavra-passe (recovery). Captura token e permite definir nova senha.
+ * Descrição: Finaliza reset de palavra-passe (recovery).
  * =============================================
  */
 
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { createClient } from "@supabase/supabase-js"
-
-function getEnv(name: string): string {
-  const v = process.env[name]
-  if (!v) throw new Error(`Missing env var: ${name}`)
-  return v
-}
+import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 
 function parseHashParams(hash: string): Record<string, string> {
   const h = hash.startsWith("#") ? hash.slice(1) : hash
@@ -30,14 +24,6 @@ function parseHashParams(hash: string): Record<string, string> {
 }
 
 export default function AuthResetPage() {
-  const supabase = useMemo(() => {
-    const url = getEnv("NEXT_PUBLIC_SUPABASE_URL")
-    // atenção: no Supabase novo, essa env pode conter a publishable key (sb_publishable_...)
-    // mas mantemos o nome para não mexer no resto do projeto.
-    const anon = getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
-    return createClient(url, anon)
-  }, [])
-
   const [ready, setReady] = useState(false)
   const [hasSession, setHasSession] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -46,17 +32,34 @@ export default function AuthResetPage() {
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState(false)
 
+  const supabase: SupabaseClient | null = useMemo(() => {
+    // ⚠️ Acesso estático (Next injeta no bundle)
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+    if (!url || !anon) {
+      // Não crasha a app — mostra erro útil
+      setError("Configuração ausente: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY")
+      setReady(true)
+      return null
+    }
+
+    return createClient(url, anon, { auth: { persistSession: true } })
+  }, [])
+
   useEffect(() => {
     const run = async () => {
       setError(null)
 
-      // Fluxo A: link com hash (#access_token=...&refresh_token=...&type=recovery)
-      const hash = window.location.hash || ""
-      const hp = parseHashParams(hash)
-      const access_token = hp["access_token"]
-      const refresh_token = hp["refresh_token"]
+      if (!supabase) return
 
       try {
+        // Fluxo A: hash (#access_token=...&refresh_token=...&type=recovery)
+        const hash = window.location.hash || ""
+        const hp = parseHashParams(hash)
+        const access_token = hp["access_token"]
+        const refresh_token = hp["refresh_token"]
+
         if (access_token && refresh_token) {
           const { error: setErr } = await supabase.auth.setSession({
             access_token,
@@ -64,14 +67,11 @@ export default function AuthResetPage() {
           })
           if (setErr) throw setErr
         } else {
-          // Fluxo B: link com ?code=... (PKCE / novos fluxos)
-          // Se houver code no query, tentamos exchange
+          // Fluxo B: query ?code=... (PKCE)
           const url = new URL(window.location.href)
           const code = url.searchParams.get("code")
           if (code) {
-            const { error: exErr } = await supabase.auth.exchangeCodeForSession(
-              window.location.href
-            )
+            const { error: exErr } = await supabase.auth.exchangeCodeForSession(window.location.href)
             if (exErr) throw exErr
           }
         }
@@ -81,9 +81,7 @@ export default function AuthResetPage() {
         setReady(true)
 
         if (!data.session) {
-          setError(
-            "Não foi possível validar o link de recuperação. Peça um novo link de reset."
-          )
+          setError("Não foi possível validar o link de recuperação. Peça um novo link de reset.")
         }
       } catch (e: any) {
         setReady(true)
@@ -97,6 +95,8 @@ export default function AuthResetPage() {
 
   const onSave = async () => {
     setError(null)
+    if (!supabase) return
+
     if (password.length < 8) {
       setError("A palavra-passe deve ter pelo menos 8 caracteres.")
       return
@@ -113,7 +113,6 @@ export default function AuthResetPage() {
 
       setDone(true)
 
-      // opcional: terminar sessão e mandar para login
       await supabase.auth.signOut()
       setTimeout(() => {
         window.location.replace("/login")
@@ -143,9 +142,7 @@ export default function AuthResetPage() {
           </div>
         ) : done ? (
           <div className="mt-6 rounded-lg border border-emerald-900/60 bg-emerald-950/30 p-4">
-            <p className="text-sm text-emerald-200">
-              Palavra-passe atualizada. A redirecionar para o login…
-            </p>
+            <p className="text-sm text-emerald-200">Palavra-passe atualizada. A redirecionar…</p>
           </div>
         ) : (
           <div className="mt-6 space-y-3">
