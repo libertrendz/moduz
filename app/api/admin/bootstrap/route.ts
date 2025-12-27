@@ -101,13 +101,22 @@ export async function POST(req: Request) {
     if (settingsErr) throw settingsErr
 
     // 4) Ativar módulos base
-    const modRows = [...new Set(enable_modules)]
-      .filter(Boolean)
-      .map((module_key) => ({
-        empresa_id: empresa.id,
-        module_key,
-        enabled: true,
-      }))
+    const uniqueModules = (enable_modules || [])
+  .filter((m): m is string => typeof m === "string" && m.trim().length > 0)
+  .map((m) => m.trim())
+
+const seen: Record<string, true> = {}
+const modRows = uniqueModules
+  .filter((m) => {
+    if (seen[m]) return false
+    seen[m] = true
+    return true
+  })
+  .map((module_key) => ({
+    empresa_id: empresa.id,
+    module_key,
+    enabled: true,
+  }))
 
     if (modRows.length > 0) {
       const { error: modErr } = await supabase
