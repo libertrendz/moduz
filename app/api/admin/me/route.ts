@@ -81,7 +81,10 @@ export async function GET(req: Request) {
       })
     }
 
-    const empresaIds = [...new Set(profiles.map((p) => p.empresa_id))]
+    const empresaIds = profiles
+  .map((p) => p.empresa_id)
+  .filter((id): id is string => typeof id === "string" && id.length > 0)
+  .filter((id, idx, arr) => arr.indexOf(id) === idx)
 
     const { data: empresas, error: empresasErr } = await admin
       .from("empresas")
