@@ -1,10 +1,12 @@
 -- 20251229_core_modules_enabled.sql
--- Core: Gestão de Módulos (modules_enabled) + auditoria + RLS + guardrails
--- Idempotente.
+-- Core: Gestão de Módulos (modules_enabled) + audit_log + RLS + guardrails
+-- Idempotente (Supabase/Postgres)
 
 begin;
 
+-- =========================================================
 -- Extensions (caso ainda não existam)
+-- =========================================================
 create extension if not exists pgcrypto;
 create extension if not exists "uuid-ossp";
 
@@ -14,12 +16,12 @@ create extension if not exists "uuid-ossp";
 create or replace function public.tg_set_updated_at()
 returns trigger
 language plpgsql
-as $$
+as $fn$
 begin
   new.updated_at = now();
   return new;
 end;
-$$;
+$fn$;
 
 -- =========================================================
 -- Helper: JWT claims
@@ -28,7 +30,7 @@ create or replace function public.auth_empresa_id()
 returns uuid
 language plpgsql
 stable
-as $$
+as $fn$
 declare
   claims jsonb;
   emp text;
@@ -50,15 +52,15 @@ exception
   when others then
     return null;
 end;
-$$;
+$fn$;
 
 create or replace function public.auth_papel()
 returns text
 language sql
 stable
-as $$
+as $fn$
   select coalesce((auth.jwt() ->> 'papel'), 'externo');
-$$;
+$fn$;
 
 -- =========================================================
 -- Tabela: audit_log (mínimo, transversal)
@@ -80,7 +82,7 @@ create index if not exists audit_log_empresa_created_idx
 
 alter table public.audit_log enable row level security;
 
--- Leitura para a própria empresa
+-- Policies (idempotentes)
 do $$
 begin
   if not exists (
@@ -92,16 +94,12 @@ begin
       for select
       using (empresa_id = public.auth_empresa_id());
   end if;
-end$$;
 
--- Escrita apenas admin (normalmente via API com service role, mas mantemos coerente)
-do $$
-begin
   if not exists (
     select 1 from pg_policies
-    where schemaname='public' and tablename='audit_log' and policyname='audit_log_admin_write'
+    where schemaname='public' and tablename='audit_log' and policyname='audit_log_admin_insert'
   ) then
-    create policy audit_log_admin_write
+    create policy audit_log_admin_insert
       on public.audit_log
       for insert
       with check (empresa_id = public.auth_empresa_id() and public.auth_papel() = 'admin');
@@ -120,13 +118,14 @@ create table if not exists public.modules_enabled (
   primary key (empresa_id, modulo)
 );
 
--- "Enum" leve: lista oficial de módulos
+-- "Enum" leve: lista oficial de módulos (constraint idempotente)
 do $$
 begin
   if not exists (
     select 1
     from pg_constraint
     where conname = 'modules_enabled_modulo_chk'
+      and conrelid = 'public.modules_enabled'::regclass
   ) then
     alter table public.modules_enabled
       add constraint modules_enabled_modulo_chk
@@ -144,11 +143,13 @@ begin
   end if;
 end$$;
 
--- updated_at trigger
+-- updated_at trigger (idempotente)
 do $$
 begin
   if not exists (
-    select 1 from pg_trigger where tgname = 'trg_modules_enabled_updated_at'
+    select 1 from pg_trigger
+    where tgname = 'trg_modules_enabled_updated_at'
+      and tgrelid = 'public.modules_enabled'::regclass
   ) then
     create trigger trg_modules_enabled_updated_at
       before update on public.modules_enabled
@@ -157,27 +158,28 @@ begin
   end if;
 end$$;
 
--- Guardrail: Core nunca pode ser desativado
+-- Guardrails: Core nunca pode ser desativado + normaliza modulo
 create or replace function public.tg_modules_enabled_guardrails()
 returns trigger
 language plpgsql
-as $$
+as $fn$
 begin
+  new.modulo := lower(trim(new.modulo));
+
   if new.modulo = 'core' and new.ativo = false then
     raise exception 'O módulo core não pode ser desativado.';
   end if;
 
-  -- Normalização: trim e lower
-  new.modulo := lower(trim(new.modulo));
-
   return new;
 end;
-$$;
+$fn$;
 
 do $$
 begin
   if not exists (
-    select 1 from pg_trigger where tgname = 'trg_modules_enabled_guardrails'
+    select 1 from pg_trigger
+    where tgname = 'trg_modules_enabled_guardrails'
+      and tgrelid = 'public.modules_enabled'::regclass
   ) then
     create trigger trg_modules_enabled_guardrails
       before insert or update on public.modules_enabled
@@ -189,7 +191,7 @@ end$$;
 -- RLS
 alter table public.modules_enabled enable row level security;
 
--- Leitura para a própria empresa
+-- Policies (idempotentes)
 do $$
 begin
   if not exists (
@@ -201,11 +203,7 @@ begin
       for select
       using (empresa_id = public.auth_empresa_id());
   end if;
-end$$;
 
--- Escrita apenas admin (para coerência; na prática vamos escrever via service role nas rotas admin)
-do $$
-begin
   if not exists (
     select 1 from pg_policies
     where schemaname='public' and tablename='modules_enabled' and policyname='modules_enabled_admin_write'
@@ -219,14 +217,13 @@ begin
 end$$;
 
 -- =========================================================
--- Seed function: garante linhas para todos os módulos base
--- (idempotente por empresa)
+-- Seed function: garante linhas para todos os módulos (por empresa)
 -- =========================================================
 create or replace function public.moduz_core_seed_modules(p_empresa_id uuid)
 returns void
 language plpgsql
 security definer
-as $$
+as $fn$
 begin
   insert into public.modules_enabled (empresa_id, modulo, ativo)
   values
@@ -241,24 +238,30 @@ begin
     (p_empresa_id, 'flow', false)
   on conflict (empresa_id, modulo) do nothing;
 end;
-$$;
+$fn$;
 
--- Opcional: trigger para auto-seed ao criar empresa
--- Só cria se a tabela empresas existir (deve existir no Core)
+-- =========================================================
+-- Trigger opcional: auto-seed ao criar empresa
+-- (SEM $$ aninhado: usa $emp$)
+-- =========================================================
+create or replace function public.tg_empresas_seed_modules()
+returns trigger
+language plpgsql
+as $emp$
+begin
+  perform public.moduz_core_seed_modules(new.id);
+  return new;
+end;
+$emp$;
+
 do $$
 begin
   if to_regclass('public.empresas') is not null then
-    if not exists (select 1 from pg_trigger where tgname = 'trg_empresas_seed_modules') then
-      create or replace function public.tg_empresas_seed_modules()
-      returns trigger
-      language plpgsql
-      as $$
-      begin
-        perform public.moduz_core_seed_modules(new.id);
-        return new;
-      end;
-      $$;
-
+    if not exists (
+      select 1 from pg_trigger
+      where tgname = 'trg_empresas_seed_modules'
+        and tgrelid = 'public.empresas'::regclass
+    ) then
       create trigger trg_empresas_seed_modules
         after insert on public.empresas
         for each row
