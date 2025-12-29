@@ -77,47 +77,56 @@ export async function POST(req: Request) {
     if (!adminCheck.ok) return NextResponse.json({ error: adminCheck.error }, { status: adminCheck.status });
 
     const body = await req.json().catch(() => null);
-    const moduloRaw = String(body?.modulo ?? "").trim().toLowerCase();
-    const ativo = Boolean(body?.ativo);
+    const moduleKey = String(body?.module_key ?? body?.modulo ?? "").trim().toLowerCase();
+    const enabled = Boolean(body?.enabled ?? body?.ativo);
 
-    if (!VALID_MODULES.has(moduloRaw)) {
-      return NextResponse.json({ error: "INVALID_MODULO" }, { status: 400 });
+    if (!VALID_MODULES.has(moduleKey)) {
+      return NextResponse.json({ error: "INVALID_MODULE_KEY" }, { status: 400 });
     }
-    if (moduloRaw === "core" && ativo === false) {
+    if (moduleKey === "core" && enabled === false) {
       return NextResponse.json({ error: "CORE_CANNOT_BE_DISABLED" }, { status: 400 });
     }
 
     const admin = supabaseAdmin();
 
-    // Garante seed antes (idempotente)
+    // Seed idempotente (garante que a linha existe)
     const { error: seedErr } = await admin.rpc("moduz_core_seed_modules", { p_empresa_id: empresaId });
     if (seedErr) return NextResponse.json({ error: "SEED_FAILED", details: seedErr.message }, { status: 500 });
 
+    // enabled_at é NOT NULL no teu schema: quando ligar, atualiza para now()
+    // quando desligar, mantemos enabled_at (histórico)
+    const patch: Record<string, any> = {
+      empresa_id: empresaId,
+      module_key: moduleKey,
+      enabled,
+    };
+    if (enabled) patch.enabled_at = new Date().toISOString();
+
     const { data, error } = await admin
       .from("modules_enabled")
-      .upsert({ empresa_id: empresaId, modulo: moduloRaw, ativo }, { onConflict: "empresa_id,modulo" })
-      .select("modulo, ativo, updated_at")
+      .upsert(patch, { onConflict: "empresa_id,module_key" })
+      .select("module_key, enabled, enabled_at, updated_at")
       .single();
 
     if (error) return NextResponse.json({ error: "DB_ERROR", details: error.message }, { status: 500 });
 
-    // Auditoria (mínimo)
+    // Auditoria (assumindo que agora vais criar audit_log com a migration)
     const { error: auditErr } = await admin.from("audit_log").insert({
       empresa_id: empresaId,
       actor_user_id: adminCheck.userId,
       actor_profile_id: adminCheck.profileId,
       action: "MODULE_TOGGLED",
       entity: "modules_enabled",
-      payload: { modulo: moduloRaw, ativo },
+      payload: { module_key: moduleKey, enabled },
     });
 
-    if (auditErr) {
-      // Não quebramos a operação de toggle por falha de auditoria,
-      // mas devolvemos aviso.
-      return NextResponse.json({ ok: true, module: data, audit: "FAILED", audit_details: auditErr.message });
-    }
-
-    return NextResponse.json({ ok: true, module: data, audit: "OK" });
+    // Se audit falhar, não bloqueia o toggle
+    return NextResponse.json({
+      ok: true,
+      module: data,
+      audit: auditErr ? "FAILED" : "OK",
+      audit_details: auditErr?.message ?? null,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: "UNEXPECTED", details: e?.message ?? String(e) }, { status: 500 });
   }
