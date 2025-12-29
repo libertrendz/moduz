@@ -64,60 +64,67 @@ function readChunkedCookie(all: Record<string, string>, base: string): string | 
 
 function extractAccessToken(raw: string): string | null {
   const decoded = decodeMaybe(raw);
-
-  // JWT puro (muito comum)
   if (isJwtLike(decoded)) return decoded;
 
-  // JSON (urlencoded) com access_token
   try {
     const j = JSON.parse(decoded);
     const tok = j?.access_token ?? j?.currentSession?.access_token;
     if (typeof tok === "string" && tok.length > 20) return tok;
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // base64 JSON (alguns setups)
   try {
     const val = decoded.startsWith("base64-") ? decoded.slice("base64-".length) : decoded;
     const txt = Buffer.from(val, "base64").toString("utf8");
     const j = JSON.parse(txt);
     const tok = j?.access_token ?? j?.currentSession?.access_token;
     if (typeof tok === "string" && tok.length > 20) return tok;
-  } catch {
-    // ignore
-  }
+  } catch {}
 
   return null;
 }
 
-function getAccessTokenFromCookies(): { token: string | null; cookieNames: string[] } {
+function getAllCookies(): { all: Record<string, string>; cookieNames: string[] } {
   const store = nextCookies();
-  const allList = store.getAll();
+  const list = store.getAll();
   const all: Record<string, string> = {};
-  for (const c of allList) all[c.name] = c.value;
+  for (let i = 0; i < list.length; i++) all[list[i].name] = list[i].value;
+  return { all, cookieNames: list.map((c) => c.name) };
+}
 
-  const cookieNames = allList.map((c) => c.name);
+function uniquePush(arr: string[], v: string) {
+  if (arr.indexOf(v) === -1) arr.push(v);
+}
 
-  // 1) cookies diretas
-  for (const k of ["sb-access-token", "sb:token"]) {
-    if (all[k]) {
-      const tok = extractAccessToken(all[k]);
-      if (tok) return { token: tok, cookieNames };
-    }
+function getAccessTokenFromCookies(): { token: string | null; cookieNames: string[] } {
+  const { all, cookieNames } = getAllCookies();
+
+  // diretos
+  const directKeys = ["sb-access-token", "sb:token"];
+  for (let i = 0; i < directKeys.length; i++) {
+    const k = directKeys[i];
+    if (!all[k]) continue;
+    const tok = extractAccessToken(all[k]);
+    if (tok) return { token: tok, cookieNames };
   }
 
-  // 2) cookies sb-*-auth-token / sb-*-access-token (chunked ou não)
-  const bases = new Set<string>();
-  for (const name of Object.keys(all)) {
-    if (!name.startsWith("sb-")) continue;
-    if (!(name.includes("auth-token") || name.includes("access-token"))) continue;
-    bases.add(name.includes(".") ? name.slice(0, name.lastIndexOf(".")) : name);
+  // bases sb-*-auth-token / sb-*-access-token (chunked ou não) — sem Set
+  const bases: string[] = [];
+  const names = Object.keys(all);
+
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    if (name.indexOf("sb-") !== 0) continue;
+    if (name.indexOf("auth-token") === -1 && name.indexOf("access-token") === -1) continue;
+
+    const base = name.indexOf(".") !== -1 ? name.slice(0, name.lastIndexOf(".")) : name;
+    uniquePush(bases, base);
   }
 
-  for (const base of bases) {
+  for (let i = 0; i < bases.length; i++) {
+    const base = bases[i];
     const combined = readChunkedCookie(all, base);
     if (!combined) continue;
+
     const tok = extractAccessToken(combined);
     if (tok) return { token: tok, cookieNames };
   }
@@ -155,7 +162,6 @@ export async function GET(req: Request) {
     const accessToken = bearer ?? cookieToken;
 
     if (!accessToken) {
-      // debug seguro: só nomes de cookies, sem valores
       return NextResponse.json({ error: "MISSING_SESSION", cookie_names: cookieNames }, { status: 401 });
     }
 
