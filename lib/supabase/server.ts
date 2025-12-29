@@ -7,12 +7,6 @@ function env(name: string): string {
   return v;
 }
 
-/**
- * Supabase SSR Client
- * - Lê a sessão pelos cookies HttpOnly automaticamente
- * - Suporta cookies chunked do Supabase
- * - Evita qualquer parsing manual de cookie
- */
 export function createSupabaseServerClient() {
   const cookieStore = cookies();
 
