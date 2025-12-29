@@ -68,19 +68,31 @@ export async function GET(req: Request) {
 
     const admin = supabaseAdmin();
 
-    // Garante seed (idempotente)
+    // Seed idempotente (função já existe no teu DB)
     const { error: seedErr } = await admin.rpc("moduz_core_seed_modules", { p_empresa_id: empresaId });
     if (seedErr) return NextResponse.json({ error: "SEED_FAILED", details: seedErr.message }, { status: 500 });
 
     const { data, error } = await admin
       .from("modules_enabled")
-      .select("modulo, ativo, updated_at")
+      .select("module_key, enabled, enabled_at, updated_at")
       .eq("empresa_id", empresaId)
-      .order("modulo", { ascending: true });
+      .order("module_key", { ascending: true });
 
     if (error) return NextResponse.json({ error: "DB_ERROR", details: error.message }, { status: 500 });
 
-    return NextResponse.json({ empresa_id: empresaId, modules: data ?? [] } as Json);
+    // Formato limpo para UI (mantém nomes do teu schema + compat)
+    return NextResponse.json(
+      {
+        empresa_id: empresaId,
+        modules: (data ?? []).map((m) => ({
+          module_key: m.module_key,
+          enabled: m.enabled,
+          enabled_at: m.enabled_at,
+          updated_at: m.updated_at,
+        })),
+      } as Json,
+      { status: 200 }
+    );
   } catch (e: any) {
     return NextResponse.json({ error: "UNEXPECTED", details: e?.message ?? String(e) }, { status: 500 });
   }
