@@ -42,50 +42,75 @@ function parseCookieHeader(cookieHeader: string | null): Record<string, string> 
   return out;
 }
 
-function getAccessTokenFromCookies(req: Request): string | null {
-  const cookies = parseCookieHeader(req.headers.get("cookie"));
-  const authCookieKey = Object.keys(cookies).find((k) => k.includes("auth-token") && k.startsWith("sb-"));
-  if (!authCookieKey) return null;
+function readChunkedCookie(cookies: Record<string, string>, baseName: string): string | null {
+  const parts = Object.keys(cookies)
+    .filter((k) => k === baseName || k.startsWith(baseName + "."))
+    .sort((a, b) => {
+      const ai = a.includes(".") ? Number(a.split(".").pop()) : -1;
+      const bi = b.includes(".") ? Number(b.split(".").pop()) : -1;
+      return ai - bi;
+    });
 
-  const raw = cookies[authCookieKey];
-  if (!raw) return null;
+  if (parts.length === 0) return null;
+  return parts.map((k) => cookies[k] ?? "").join("");
+}
 
-  const decoded = (() => {
-    try {
-      return decodeURIComponent(raw);
-    } catch {
-      return raw;
-    }
-  })();
+function decodeMaybe(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
 
-  const tryJson = (s: string): any | null => {
-    try {
-      return JSON.parse(s);
-    } catch {
-      return null;
-    }
-  };
+function tryJson(s: string): any | null {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
 
-  const tryBase64Json = (s: string): any | null => {
-    const val = s.startsWith("base64-") ? s.slice("base64-".length) : s;
-    try {
-      const buff =
-        typeof Buffer !== "undefined"
-          ? Buffer.from(val, "base64").toString("utf8")
-          : atob(val);
-      return tryJson(buff);
-    } catch {
-      return null;
-    }
-  };
+function tryBase64Json(s: string): any | null {
+  const val = s.startsWith("base64-") ? s.slice("base64-".length) : s;
+  try {
+    const text =
+      typeof Buffer !== "undefined"
+        ? Buffer.from(val, "base64").toString("utf8")
+        : atob(val);
+    return tryJson(text);
+  } catch {
+    return null;
+  }
+}
 
+function extractAccessTokenFromCookieValue(rawVal: string): string | null {
+  const decoded = decodeMaybe(rawVal);
   const j1 = tryJson(decoded);
   const j2 = j1 ? null : tryBase64Json(decoded);
-
   const payload = j1 ?? j2;
   const token = payload?.access_token ?? payload?.currentSession?.access_token ?? null;
-
   return typeof token === "string" && token.length > 20 ? token : null;
+}
+
+function getAccessTokenFromCookies(req: Request): string | null {
+  const cookies = parseCookieHeader(req.headers.get("cookie"));
+
+  const candidates = Object.keys(cookies)
+    .filter((k) => k.startsWith("sb-") && (k.includes("auth-token") || k.includes("access-token")))
+    .map((k) => (k.includes(".") ? k.slice(0, k.lastIndexOf(".")) : k));
+
+  const baseNames = Array.from(new Set(candidates));
+
+  for (const base of baseNames) {
+    const combined = readChunkedCookie(cookies, base);
+    if (!combined) continue;
+
+    const token = extractAccessTokenFromCookieValue(combined);
+    if (token) return token;
+  }
+
+  return null;
 }
 
 function getAccessToken(req: Request): string | null {
@@ -141,27 +166,25 @@ export async function POST(req: Request) {
     const moduleKey = String(body?.module_key ?? body?.modulo ?? "").trim().toLowerCase();
     const enabled = Boolean(body?.enabled ?? body?.ativo);
 
-    if (!VALID_MODULES.has(moduleKey)) {
-      return NextResponse.json({ error: "INVALID_MODULE_KEY" }, { status: 400 });
-    }
+    if (!VALID_MODULES.has(moduleKey)) return NextResponse.json({ error: "INVALID_MODULE_KEY" }, { status: 400 });
     if (moduleKey === "core" && enabled === false) {
       return NextResponse.json({ error: "CORE_CANNOT_BE_DISABLED" }, { status: 400 });
     }
 
     const admin = supabaseAdmin();
 
-    // Seed idempotente
     const { error: seedErr } = await admin.rpc("moduz_core_seed_modules", { p_empresa_id: empresaId });
     if (seedErr) return NextResponse.json({ error: "SEED_FAILED", details: seedErr.message }, { status: 500 });
 
-    // enabled_at é NOT NULL no teu schema:
-    // - ao ligar: enabled_at = now()
-    // - ao desligar: mantém enabled_at (histórico)
     const patch: Record<string, any> = {
       empresa_id: empresaId,
       module_key: moduleKey,
       enabled,
     };
+
+    // enabled_at é NOT NULL no teu schema:
+    // - ao ligar: atualiza para now()
+    // - ao desligar: mantém (histórico)
     if (enabled) patch.enabled_at = new Date().toISOString();
 
     const { data, error } = await admin
@@ -172,7 +195,7 @@ export async function POST(req: Request) {
 
     if (error) return NextResponse.json({ error: "DB_ERROR", details: error.message }, { status: 500 });
 
-    // Auditoria (se a tabela existir; se não existir, não bloqueia)
+    // audit_log (se existir). não bloqueia se falhar.
     const { error: auditErr } = await admin.from("audit_log").insert({
       empresa_id: empresaId,
       actor_user_id: adminCheck.userId,
