@@ -1,11 +1,11 @@
 -- 20251229_core_modules_enabled.sql
 -- Core: Gestão de Módulos (modules_enabled) + audit_log + RLS + guardrails
--- Idempotente (Supabase/Postgres)
+-- Idempotente e tolerante a tabelas antigas (coluna module vs modulo)
 
 begin;
 
 -- =========================================================
--- Extensions (caso ainda não existam)
+-- Extensions
 -- =========================================================
 create extension if not exists pgcrypto;
 create extension if not exists "uuid-ossp";
@@ -68,8 +68,8 @@ $fn$;
 create table if not exists public.audit_log (
   id              uuid primary key default gen_random_uuid(),
   empresa_id       uuid not null,
-  actor_user_id    uuid, -- auth.users.id (quando disponível)
-  actor_profile_id uuid, -- profiles.id (opcional)
+  actor_user_id    uuid,
+  actor_profile_id uuid,
   action           text not null,
   entity           text,
   entity_id        uuid,
@@ -82,7 +82,6 @@ create index if not exists audit_log_empresa_created_idx
 
 alter table public.audit_log enable row level security;
 
--- Policies (idempotentes)
 do $$
 begin
   if not exists (
@@ -118,32 +117,142 @@ create table if not exists public.modules_enabled (
   primary key (empresa_id, modulo)
 );
 
--- "Enum" leve: lista oficial de módulos (constraint idempotente)
+-- =========================================================
+-- Compatibilidade com versões antigas:
+-- - se existir coluna "module", renomear para "modulo"
+-- - se não existir "modulo", criar
+-- - garantir created_at/updated_at
+-- =========================================================
+do $$
+declare
+  has_modulo boolean;
+  has_module boolean;
+  has_created_at boolean;
+  has_updated_at boolean;
+begin
+  select exists (
+    select 1 from information_schema.columns
+    where table_schema='public' and table_name='modules_enabled' and column_name='modulo'
+  ) into has_modulo;
+
+  select exists (
+    select 1 from information_schema.columns
+    where table_schema='public' and table_name='modules_enabled' and column_name='module'
+  ) into has_module;
+
+  select exists (
+    select 1 from information_schema.columns
+    where table_schema='public' and table_name='modules_enabled' and column_name='created_at'
+  ) into has_created_at;
+
+  select exists (
+    select 1 from information_schema.columns
+    where table_schema='public' and table_name='modules_enabled' and column_name='updated_at'
+  ) into has_updated_at;
+
+  -- Se veio de um esquema antigo com "module"
+  if (not has_modulo) and has_module then
+    execute 'alter table public.modules_enabled rename column module to modulo';
+    has_modulo := true;
+  end if;
+
+  -- Se não existe nenhuma coluna para o nome do módulo, cria
+  if not has_modulo then
+    execute 'alter table public.modules_enabled add column modulo text';
+    -- tenta popular com default seguro (se já há linhas antigas sem coluna, ficam null e vamos corrigir mais abaixo)
+    execute 'update public.modules_enabled set modulo = ''core'' where modulo is null';
+    -- só depois impõe NOT NULL
+    execute 'alter table public.modules_enabled alter column modulo set not null';
+  end if;
+
+  if not has_created_at then
+    execute 'alter table public.modules_enabled add column created_at timestamptz not null default now()';
+  end if;
+
+  if not has_updated_at then
+    execute 'alter table public.modules_enabled add column updated_at timestamptz not null default now()';
+  end if;
+
+end$$;
+
+-- =========================================================
+-- Constraint: lista oficial de módulos (só cria se a coluna existir)
+-- =========================================================
 do $$
 begin
-  if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'modules_enabled_modulo_chk'
-      and conrelid = 'public.modules_enabled'::regclass
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema='public' and table_name='modules_enabled' and column_name='modulo'
   ) then
-    alter table public.modules_enabled
-      add constraint modules_enabled_modulo_chk
-      check (modulo in (
-        'core',
-        'docs',
-        'people',
-        'track',
-        'finance',
-        'bizz',
-        'stock',
-        'assets',
-        'flow'
-      ));
+    if not exists (
+      select 1
+      from pg_constraint
+      where conname = 'modules_enabled_modulo_chk'
+        and conrelid = 'public.modules_enabled'::regclass
+    ) then
+      alter table public.modules_enabled
+        add constraint modules_enabled_modulo_chk
+        check (modulo in (
+          'core',
+          'docs',
+          'people',
+          'track',
+          'finance',
+          'bizz',
+          'stock',
+          'assets',
+          'flow'
+        ));
+    end if;
   end if;
 end$$;
 
--- updated_at trigger (idempotente)
+-- =========================================================
+-- PK: garantir primary key (empresa_id, modulo)
+-- Se já existir uma PK diferente, tenta substituir.
+-- =========================================================
+do $$
+declare
+  current_pk_name text;
+  pk_is_correct boolean;
+begin
+  -- existe PK?
+  select conname
+  into current_pk_name
+  from pg_constraint
+  where conrelid = 'public.modules_enabled'::regclass
+    and contype = 'p'
+  limit 1;
+
+  -- PK correta?
+  select exists (
+    select 1
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+    join pg_attribute a1 on a1.attrelid=t.oid and a1.attnum = c.conkey[1]
+    join pg_attribute a2 on a2.attrelid=t.oid and a2.attnum = c.conkey[2]
+    where n.nspname='public'
+      and t.relname='modules_enabled'
+      and c.contype='p'
+      and array_length(c.conkey,1)=2
+      and a1.attname='empresa_id'
+      and a2.attname='modulo'
+  ) into pk_is_correct;
+
+  if current_pk_name is null then
+    -- não tem PK: cria
+    execute 'alter table public.modules_enabled add primary key (empresa_id, modulo)';
+  elsif pk_is_correct = false then
+    -- tem PK mas diferente: substitui
+    execute format('alter table public.modules_enabled drop constraint %I', current_pk_name);
+    execute 'alter table public.modules_enabled add primary key (empresa_id, modulo)';
+  end if;
+end$$;
+
+-- =========================================================
+-- Trigger updated_at (idempotente)
+-- =========================================================
 do $$
 begin
   if not exists (
@@ -158,7 +267,9 @@ begin
   end if;
 end$$;
 
--- Guardrails: Core nunca pode ser desativado + normaliza modulo
+-- =========================================================
+-- Guardrails: normaliza e bloqueia core=false
+-- =========================================================
 create or replace function public.tg_modules_enabled_guardrails()
 returns trigger
 language plpgsql
@@ -188,10 +299,11 @@ begin
   end if;
 end$$;
 
+-- =========================================================
 -- RLS
+-- =========================================================
 alter table public.modules_enabled enable row level security;
 
--- Policies (idempotentes)
 do $$
 begin
   if not exists (
@@ -217,7 +329,7 @@ begin
 end$$;
 
 -- =========================================================
--- Seed function: garante linhas para todos os módulos (por empresa)
+-- Seed function (idempotente)
 -- =========================================================
 create or replace function public.moduz_core_seed_modules(p_empresa_id uuid)
 returns void
@@ -242,7 +354,6 @@ $fn$;
 
 -- =========================================================
 -- Trigger opcional: auto-seed ao criar empresa
--- (SEM $$ aninhado: usa $emp$)
 -- =========================================================
 create or replace function public.tg_empresas_seed_modules()
 returns trigger
