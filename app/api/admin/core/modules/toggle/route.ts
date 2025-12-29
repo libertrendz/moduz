@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "../../../../../../lib/supabase/server";
 
 function env(name: string): string {
   const v = process.env[name];
@@ -41,11 +41,10 @@ export async function POST(req: Request) {
     const empresaId = getEmpresaId(req);
     if (!empresaId) return NextResponse.json({ error: "MISSING_EMPRESA_ID" }, { status: 400 });
 
-    // ✅ Auth via SSR cookies (Supabase oficial)
     const supabase = createSupabaseServerClient();
     const { data: userRes, error: userErr } = await supabase.auth.getUser();
-
     const user = userRes?.user;
+
     if (userErr || !user) return NextResponse.json({ error: "MISSING_SESSION" }, { status: 401 });
 
     const adminCheck = await assertAdmin(user.id, empresaId);
@@ -64,19 +63,15 @@ export async function POST(req: Request) {
 
     const admin = supabaseAdmin();
 
-    // Seed idempotente
     const { error: seedErr } = await admin.rpc("moduz_core_seed_modules", { p_empresa_id: empresaId });
     if (seedErr) return NextResponse.json({ error: "SEED_FAILED", details: seedErr.message }, { status: 500 });
 
-    // enabled_at é NOT NULL no teu schema:
-    // - ao ligar: atualiza enabled_at para now()
-    // - ao desligar: mantém enabled_at (histórico)
     const patch: Record<string, any> = {
       empresa_id: empresaId,
       module_key: moduleKey,
       enabled,
     };
-    if (enabled) patch.enabled_at = new Date().toISOString();
+    if (enabled) patch.enabled_at = new Date().toISOString(); // enabled_at é NOT NULL
 
     const { data, error } = await admin
       .from("modules_enabled")
@@ -86,7 +81,6 @@ export async function POST(req: Request) {
 
     if (error) return NextResponse.json({ error: "DB_ERROR", details: error.message }, { status: 500 });
 
-    // audit_log (se existir): não bloqueia se falhar
     const { error: auditErr } = await admin.from("audit_log").insert({
       empresa_id: empresaId,
       actor_user_id: user.id,
