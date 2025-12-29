@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "../../../../../../lib/supabase/server";
 
 type Json = Record<string, unknown>;
 
@@ -41,11 +41,10 @@ export async function GET(req: Request) {
     const empresaId = getEmpresaId(req);
     if (!empresaId) return NextResponse.json({ error: "MISSING_EMPRESA_ID" }, { status: 400 });
 
-    // ✅ Auth via SSR cookies (Supabase oficial)
     const supabase = createSupabaseServerClient();
     const { data: userRes, error: userErr } = await supabase.auth.getUser();
-
     const user = userRes?.user;
+
     if (userErr || !user) return NextResponse.json({ error: "MISSING_SESSION" }, { status: 401 });
 
     const adminCheck = await assertAdmin(user.id, empresaId);
@@ -53,7 +52,6 @@ export async function GET(req: Request) {
 
     const admin = supabaseAdmin();
 
-    // Seed idempotente
     const { error: seedErr } = await admin.rpc("moduz_core_seed_modules", { p_empresa_id: empresaId });
     if (seedErr) return NextResponse.json({ error: "SEED_FAILED", details: seedErr.message }, { status: 500 });
 
