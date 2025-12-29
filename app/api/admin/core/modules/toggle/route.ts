@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { cookies as nextCookies } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
 
 function env(name: string): string {
@@ -31,28 +32,12 @@ function getBearer(req: Request): string | null {
   return m?.[1] ?? null;
 }
 
-function parseCookieHeader(cookieHeader: string | null): Record<string, string> {
-  if (!cookieHeader) return {};
-  const out: Record<string, string> = {};
-  cookieHeader.split(";").forEach((part) => {
-    const [k, ...rest] = part.trim().split("=");
-    if (!k) return;
-    out[k] = rest.join("=") ?? "";
-  });
-  return out;
-}
-
-function readChunkedCookie(cookies: Record<string, string>, baseName: string): string | null {
-  const parts = Object.keys(cookies)
-    .filter((k) => k === baseName || k.startsWith(baseName + "."))
-    .sort((a, b) => {
-      const ai = a.includes(".") ? Number(a.split(".").pop()) : -1;
-      const bi = b.includes(".") ? Number(b.split(".").pop()) : -1;
-      return ai - bi;
-    });
-
-  if (parts.length === 0) return null;
-  return parts.map((k) => cookies[k] ?? "").join("");
+function isJwtLike(s: string): boolean {
+  if (!s) return false;
+  const t = s.trim();
+  if (!t.startsWith("eyJ")) return false;
+  const parts = t.split(".");
+  return parts.length === 3 && parts[0].length > 10;
 }
 
 function decodeMaybe(s: string): string {
@@ -75,9 +60,7 @@ function tryBase64Json(s: string): any | null {
   const val = s.startsWith("base64-") ? s.slice("base64-".length) : s;
   try {
     const text =
-      typeof Buffer !== "undefined"
-        ? Buffer.from(val, "base64").toString("utf8")
-        : atob(val);
+      typeof Buffer !== "undefined" ? Buffer.from(val, "base64").toString("utf8") : atob(val);
     return tryJson(text);
   } catch {
     return null;
@@ -86,35 +69,77 @@ function tryBase64Json(s: string): any | null {
 
 function extractAccessTokenFromCookieValue(rawVal: string): string | null {
   const decoded = decodeMaybe(rawVal);
+  if (isJwtLike(decoded)) return decoded;
+
   const j1 = tryJson(decoded);
   const j2 = j1 ? null : tryBase64Json(decoded);
+
   const payload = j1 ?? j2;
   const token = payload?.access_token ?? payload?.currentSession?.access_token ?? null;
-  return typeof token === "string" && token.length > 20 ? token : null;
+
+  if (typeof token === "string" && token.length > 20) return token;
+
+  const m = decoded.match(/access_token["']?\s*[:=]\s*["']([^"']+)["']/i);
+  if (m?.[1] && isJwtLike(m[1])) return m[1];
+
+  return null;
 }
 
-function getAccessTokenFromCookies(req: Request): string | null {
-  const cookies = parseCookieHeader(req.headers.get("cookie"));
+function getAllCookiesFromNext(): Record<string, string> {
+  const store = nextCookies();
+  const out: Record<string, string> = {};
+  for (const c of store.getAll()) out[c.name] = c.value;
+  return out;
+}
 
-  const candidates = Object.keys(cookies)
-    .filter((k) => k.startsWith("sb-") && (k.includes("auth-token") || k.includes("access-token")))
-    .map((k) => (k.includes(".") ? k.slice(0, k.lastIndexOf(".")) : k));
+function readChunkedCookie(cookies: Record<string, string>, baseName: string): string | null {
+  const keys = Object.keys(cookies).filter((k) => k === baseName || k.startsWith(baseName + "."));
+  if (keys.length === 0) return null;
 
-  const baseNames = Array.from(new Set(candidates));
+  keys.sort((a, b) => {
+    const ai = a.includes(".") ? Number(a.split(".").pop()) : -1;
+    const bi = b.includes(".") ? Number(b.split(".").pop()) : -1;
+    return ai - bi;
+  });
 
-  for (const base of baseNames) {
+  return keys.map((k) => cookies[k] ?? "").join("");
+}
+
+function getAccessTokenFromCookies(): string | null {
+  const cookies = getAllCookiesFromNext();
+
+  const directKeys = ["sb-access-token", "sb:token"];
+  for (const k of directKeys) {
+    if (!cookies[k]) continue;
+    const tok = extractAccessTokenFromCookieValue(cookies[k]);
+    if (tok) return tok;
+  }
+
+  const bases = new Set<string>();
+  for (const name of Object.keys(cookies)) {
+    if (!name.startsWith("sb-")) continue;
+    if (!(name.includes("auth-token") || name.includes("access-token"))) continue;
+    bases.add(name.includes(".") ? name.slice(0, name.lastIndexOf(".")) : name);
+  }
+
+  for (const base of bases) {
     const combined = readChunkedCookie(cookies, base);
     if (!combined) continue;
+    const tok = extractAccessTokenFromCookieValue(combined);
+    if (tok) return tok;
+  }
 
-    const token = extractAccessTokenFromCookieValue(combined);
-    if (token) return token;
+  for (const [name, val] of Object.entries(cookies)) {
+    if (!name.startsWith("sb")) continue;
+    const decoded = decodeMaybe(val);
+    if (isJwtLike(decoded)) return decoded;
   }
 
   return null;
 }
 
 function getAccessToken(req: Request): string | null {
-  return getBearer(req) ?? getAccessTokenFromCookies(req);
+  return getBearer(req) ?? getAccessTokenFromCookies();
 }
 
 async function assertAdmin(accessToken: string, empresaId: string) {
@@ -157,7 +182,10 @@ export async function POST(req: Request) {
     if (!empresaId) return NextResponse.json({ error: "MISSING_EMPRESA_ID" }, { status: 400 });
 
     const accessToken = getAccessToken(req);
-    if (!accessToken) return NextResponse.json({ error: "MISSING_SESSION" }, { status: 401 });
+    if (!accessToken) {
+      const names = Object.keys(getAllCookiesFromNext()).slice(0, 80);
+      return NextResponse.json({ error: "MISSING_SESSION", cookie_names: names }, { status: 401 });
+    }
 
     const adminCheck = await assertAdmin(accessToken, empresaId);
     if (!adminCheck.ok) return NextResponse.json({ error: adminCheck.error }, { status: adminCheck.status });
@@ -182,9 +210,7 @@ export async function POST(req: Request) {
       enabled,
     };
 
-    // enabled_at é NOT NULL no teu schema:
-    // - ao ligar: atualiza para now()
-    // - ao desligar: mantém (histórico)
+    // enabled_at é NOT NULL: ao ligar atualiza, ao desligar mantém
     if (enabled) patch.enabled_at = new Date().toISOString();
 
     const { data, error } = await admin
@@ -195,7 +221,6 @@ export async function POST(req: Request) {
 
     if (error) return NextResponse.json({ error: "DB_ERROR", details: error.message }, { status: 500 });
 
-    // audit_log (se existir). não bloqueia se falhar.
     const { error: auditErr } = await admin.from("audit_log").insert({
       empresa_id: empresaId,
       actor_user_id: adminCheck.userId,
