@@ -1,6 +1,11 @@
--- 20251229_core_modules_enabled.sql
--- Core: Gestão de Módulos (modules_enabled) + audit_log + RLS + guardrails
--- Idempotente e tolerante a tabelas antigas (coluna module vs modulo)
+-- 20251229_core_modules_enabled_v3.sql
+-- Core: Gestão de Módulos (schema existente: module_key/enabled/enabled_at)
+-- - garante unicidade por empresa+module_key
+-- - dedup seguro
+-- - check de módulos válidos
+-- - guardrail: core não pode ser desativado
+-- - view de compatibilidade (modulo/ativo)
+-- - seed function idempotente
 
 begin;
 
@@ -8,10 +13,9 @@ begin;
 -- Extensions
 -- =========================================================
 create extension if not exists pgcrypto;
-create extension if not exists "uuid-ossp";
 
 -- =========================================================
--- Helper: updated_at trigger
+-- Helpers (se ainda não existirem)
 -- =========================================================
 create or replace function public.tg_set_updated_at()
 returns trigger
@@ -24,234 +28,110 @@ end;
 $fn$;
 
 -- =========================================================
--- Helper: JWT claims
+-- 0) Pré-requisito: tabela existe?
 -- =========================================================
-create or replace function public.auth_empresa_id()
-returns uuid
-language plpgsql
-stable
-as $fn$
-declare
-  claims jsonb;
-  emp text;
-begin
-  begin
-    claims := auth.jwt();
-  exception
-    when others then
-      return null;
-  end;
-
-  emp := claims->>'empresa_id';
-  if emp is null then
-    return null;
-  end if;
-
-  return emp::uuid;
-exception
-  when others then
-    return null;
-end;
-$fn$;
-
-create or replace function public.auth_papel()
-returns text
-language sql
-stable
-as $fn$
-  select coalesce((auth.jwt() ->> 'papel'), 'externo');
-$fn$;
-
--- =========================================================
--- Tabela: audit_log (mínimo, transversal)
--- =========================================================
-create table if not exists public.audit_log (
-  id              uuid primary key default gen_random_uuid(),
-  empresa_id       uuid not null,
-  actor_user_id    uuid,
-  actor_profile_id uuid,
-  action           text not null,
-  entity           text,
-  entity_id        uuid,
-  payload          jsonb not null default '{}'::jsonb,
-  created_at       timestamptz not null default now()
-);
-
-create index if not exists audit_log_empresa_created_idx
-  on public.audit_log (empresa_id, created_at desc);
-
-alter table public.audit_log enable row level security;
-
 do $$
 begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname='public' and tablename='audit_log' and policyname='audit_log_select_empresa'
-  ) then
-    create policy audit_log_select_empresa
-      on public.audit_log
-      for select
-      using (empresa_id = public.auth_empresa_id());
-  end if;
-
-  if not exists (
-    select 1 from pg_policies
-    where schemaname='public' and tablename='audit_log' and policyname='audit_log_admin_insert'
-  ) then
-    create policy audit_log_admin_insert
-      on public.audit_log
-      for insert
-      with check (empresa_id = public.auth_empresa_id() and public.auth_papel() = 'admin');
+  if to_regclass('public.modules_enabled') is null then
+    raise exception 'Tabela public.modules_enabled não existe. Abortando migration.';
   end if;
 end$$;
 
 -- =========================================================
--- Tabela: modules_enabled (Core)
--- =========================================================
-create table if not exists public.modules_enabled (
-  empresa_id  uuid not null references public.empresas(id) on delete cascade,
-  modulo      text not null,
-  ativo       boolean not null default true,
-  created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now(),
-  primary key (empresa_id, modulo)
-);
-
--- =========================================================
--- Compatibilidade com versões antigas:
--- - se existir coluna "module", renomear para "modulo"
--- - se não existir "modulo", criar
--- - garantir created_at/updated_at
+-- 1) Garantir colunas esperadas (idempotente)
 -- =========================================================
 do $$
-declare
-  has_modulo boolean;
-  has_module boolean;
-  has_created_at boolean;
-  has_updated_at boolean;
 begin
-  select exists (
+  if not exists (
     select 1 from information_schema.columns
-    where table_schema='public' and table_name='modules_enabled' and column_name='modulo'
-  ) into has_modulo;
+    where table_schema='public' and table_name='modules_enabled' and column_name='module_key'
+  ) then
+    raise exception 'Coluna module_key não existe em public.modules_enabled. Abortando.';
+  end if;
 
-  select exists (
+  if not exists (
     select 1 from information_schema.columns
-    where table_schema='public' and table_name='modules_enabled' and column_name='module'
-  ) into has_module;
+    where table_schema='public' and table_name='modules_enabled' and column_name='enabled'
+  ) then
+    raise exception 'Coluna enabled não existe em public.modules_enabled. Abortando.';
+  end if;
 
-  select exists (
+  if not exists (
     select 1 from information_schema.columns
-    where table_schema='public' and table_name='modules_enabled' and column_name='created_at'
-  ) into has_created_at;
+    where table_schema='public' and table_name='modules_enabled' and column_name='enabled_at'
+  ) then
+    alter table public.modules_enabled
+      add column enabled_at timestamptz;
+  end if;
 
-  select exists (
+  if not exists (
     select 1 from information_schema.columns
     where table_schema='public' and table_name='modules_enabled' and column_name='updated_at'
-  ) into has_updated_at;
-
-  -- Se veio de um esquema antigo com "module"
-  if (not has_modulo) and has_module then
-    execute 'alter table public.modules_enabled rename column module to modulo';
-    has_modulo := true;
-  end if;
-
-  -- Se não existe nenhuma coluna para o nome do módulo, cria
-  if not has_modulo then
-    execute 'alter table public.modules_enabled add column modulo text';
-    -- tenta popular com default seguro (se já há linhas antigas sem coluna, ficam null e vamos corrigir mais abaixo)
-    execute 'update public.modules_enabled set modulo = ''core'' where modulo is null';
-    -- só depois impõe NOT NULL
-    execute 'alter table public.modules_enabled alter column modulo set not null';
-  end if;
-
-  if not has_created_at then
-    execute 'alter table public.modules_enabled add column created_at timestamptz not null default now()';
-  end if;
-
-  if not has_updated_at then
-    execute 'alter table public.modules_enabled add column updated_at timestamptz not null default now()';
-  end if;
-
-end$$;
-
--- =========================================================
--- Constraint: lista oficial de módulos (só cria se a coluna existir)
--- =========================================================
-do $$
-begin
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema='public' and table_name='modules_enabled' and column_name='modulo'
   ) then
-    if not exists (
-      select 1
-      from pg_constraint
-      where conname = 'modules_enabled_modulo_chk'
-        and conrelid = 'public.modules_enabled'::regclass
-    ) then
-      alter table public.modules_enabled
-        add constraint modules_enabled_modulo_chk
-        check (modulo in (
-          'core',
-          'docs',
-          'people',
-          'track',
-          'finance',
-          'bizz',
-          'stock',
-          'assets',
-          'flow'
-        ));
-    end if;
+    alter table public.modules_enabled
+      add column updated_at timestamptz not null default now();
   end if;
 end$$;
 
+-- Normaliza module_key (trim/lower) antes de constraints
+update public.modules_enabled
+set module_key = lower(trim(module_key))
+where module_key is not null
+  and module_key <> lower(trim(module_key));
+
 -- =========================================================
--- PK: garantir primary key (empresa_id, modulo)
--- Se já existir uma PK diferente, tenta substituir.
+-- 2) Dedup: manter 1 linha por (empresa_id, module_key)
+-- (mantém a mais recente por updated_at, depois enabled_at, depois id)
 -- =========================================================
 do $$
-declare
-  current_pk_name text;
-  pk_is_correct boolean;
 begin
-  -- existe PK?
-  select conname
-  into current_pk_name
-  from pg_constraint
-  where conrelid = 'public.modules_enabled'::regclass
-    and contype = 'p'
-  limit 1;
+  execute $q$
+    with ranked as (
+      select
+        ctid,
+        empresa_id,
+        module_key,
+        row_number() over (
+          partition by empresa_id, module_key
+          order by updated_at desc nulls last, enabled_at desc nulls last, id desc
+        ) as rn
+      from public.modules_enabled
+      where empresa_id is not null and module_key is not null
+    )
+    delete from public.modules_enabled m
+    using ranked r
+    where m.ctid = r.ctid
+      and r.rn > 1
+  $q$;
+end$$;
 
-  -- PK correta?
-  select exists (
+-- =========================================================
+-- 3) Unicidade (empresa_id, module_key)
+-- =========================================================
+create unique index if not exists modules_enabled_empresa_module_uk
+  on public.modules_enabled (empresa_id, module_key);
+
+-- =========================================================
+-- 4) Check constraint: módulos válidos (idempotente)
+-- =========================================================
+do $$
+begin
+  if not exists (
     select 1
-    from pg_constraint c
-    join pg_class t on t.oid = c.conrelid
-    join pg_namespace n on n.oid = t.relnamespace
-    join pg_attribute a1 on a1.attrelid=t.oid and a1.attnum = c.conkey[1]
-    join pg_attribute a2 on a2.attrelid=t.oid and a2.attnum = c.conkey[2]
-    where n.nspname='public'
-      and t.relname='modules_enabled'
-      and c.contype='p'
-      and array_length(c.conkey,1)=2
-      and a1.attname='empresa_id'
-      and a2.attname='modulo'
-  ) into pk_is_correct;
-
-  if current_pk_name is null then
-    -- não tem PK: cria
-    execute 'alter table public.modules_enabled add primary key (empresa_id, modulo)';
-  elsif pk_is_correct = false then
-    -- tem PK mas diferente: substitui
-    execute format('alter table public.modules_enabled drop constraint %I', current_pk_name);
-    execute 'alter table public.modules_enabled add primary key (empresa_id, modulo)';
+    from pg_constraint
+    where conname = 'modules_enabled_module_key_chk'
+      and conrelid = 'public.modules_enabled'::regclass
+  ) then
+    alter table public.modules_enabled
+      add constraint modules_enabled_module_key_chk
+      check (module_key in (
+        'core','docs','people','track','finance','bizz','stock','assets','flow'
+      ));
   end if;
 end$$;
 
 -- =========================================================
--- Trigger updated_at (idempotente)
+-- 5) updated_at trigger (idempotente)
 -- =========================================================
 do $$
 begin
@@ -268,17 +148,29 @@ begin
 end$$;
 
 -- =========================================================
--- Guardrails: normaliza e bloqueia core=false
+-- 6) Guardrail: core não pode ser desativado + seta enabled_at quando ativa
 -- =========================================================
-create or replace function public.tg_modules_enabled_guardrails()
+create or replace function public.tg_modules_enabled_guardrails_v3()
 returns trigger
 language plpgsql
 as $fn$
 begin
-  new.modulo := lower(trim(new.modulo));
+  new.module_key := lower(trim(new.module_key));
 
-  if new.modulo = 'core' and new.ativo = false then
+  if new.module_key = 'core' and new.enabled = false then
     raise exception 'O módulo core não pode ser desativado.';
+  end if;
+
+  -- marca data de ativação quando passa para enabled=true
+  if (tg_op = 'INSERT') then
+    if new.enabled = true and new.enabled_at is null then
+      new.enabled_at := now();
+    end if;
+  elsif (tg_op = 'UPDATE') then
+    if new.enabled = true and (old.enabled is distinct from true) then
+      new.enabled_at := coalesce(new.enabled_at, now());
+    end if;
+    -- se desativar, não apagamos enabled_at (histórico)
   end if;
 
   return new;
@@ -289,47 +181,31 @@ do $$
 begin
   if not exists (
     select 1 from pg_trigger
-    where tgname = 'trg_modules_enabled_guardrails'
+    where tgname = 'trg_modules_enabled_guardrails_v3'
       and tgrelid = 'public.modules_enabled'::regclass
   ) then
-    create trigger trg_modules_enabled_guardrails
+    create trigger trg_modules_enabled_guardrails_v3
       before insert or update on public.modules_enabled
       for each row
-      execute function public.tg_modules_enabled_guardrails();
+      execute function public.tg_modules_enabled_guardrails_v3();
   end if;
 end$$;
 
 -- =========================================================
--- RLS
+-- 7) View compatível com o contrato “modulo/ativo”
+-- (para front/back que esperam nomes standard)
 -- =========================================================
-alter table public.modules_enabled enable row level security;
-
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname='public' and tablename='modules_enabled' and policyname='modules_enabled_select_empresa'
-  ) then
-    create policy modules_enabled_select_empresa
-      on public.modules_enabled
-      for select
-      using (empresa_id = public.auth_empresa_id());
-  end if;
-
-  if not exists (
-    select 1 from pg_policies
-    where schemaname='public' and tablename='modules_enabled' and policyname='modules_enabled_admin_write'
-  ) then
-    create policy modules_enabled_admin_write
-      on public.modules_enabled
-      for all
-      using (empresa_id = public.auth_empresa_id() and public.auth_papel() = 'admin')
-      with check (empresa_id = public.auth_empresa_id() and public.auth_papel() = 'admin');
-  end if;
-end$$;
+create or replace view public.vw_modules_enabled as
+select
+  empresa_id,
+  module_key as modulo,
+  enabled as ativo,
+  enabled_at,
+  updated_at
+from public.modules_enabled;
 
 -- =========================================================
--- Seed function (idempotente)
+-- 8) Seed function alinhada ao teu schema (idempotente)
 -- =========================================================
 create or replace function public.moduz_core_seed_modules(p_empresa_id uuid)
 returns void
@@ -337,48 +213,19 @@ language plpgsql
 security definer
 as $fn$
 begin
-  insert into public.modules_enabled (empresa_id, modulo, ativo)
+  insert into public.modules_enabled (empresa_id, module_key, enabled, enabled_at)
   values
-    (p_empresa_id, 'core', true),
-    (p_empresa_id, 'docs', true),
-    (p_empresa_id, 'people', false),
-    (p_empresa_id, 'track', false),
-    (p_empresa_id, 'finance', false),
-    (p_empresa_id, 'bizz', false),
-    (p_empresa_id, 'stock', false),
-    (p_empresa_id, 'assets', false),
-    (p_empresa_id, 'flow', false)
-  on conflict (empresa_id, modulo) do nothing;
+    (p_empresa_id, 'core', true, now()),
+    (p_empresa_id, 'docs', true, now()),
+    (p_empresa_id, 'people', false, null),
+    (p_empresa_id, 'track', false, null),
+    (p_empresa_id, 'finance', false, null),
+    (p_empresa_id, 'bizz', false, null),
+    (p_empresa_id, 'stock', false, null),
+    (p_empresa_id, 'assets', false, null),
+    (p_empresa_id, 'flow', false, null)
+  on conflict (empresa_id, module_key) do nothing;
 end;
 $fn$;
-
--- =========================================================
--- Trigger opcional: auto-seed ao criar empresa
--- =========================================================
-create or replace function public.tg_empresas_seed_modules()
-returns trigger
-language plpgsql
-as $emp$
-begin
-  perform public.moduz_core_seed_modules(new.id);
-  return new;
-end;
-$emp$;
-
-do $$
-begin
-  if to_regclass('public.empresas') is not null then
-    if not exists (
-      select 1 from pg_trigger
-      where tgname = 'trg_empresas_seed_modules'
-        and tgrelid = 'public.empresas'::regclass
-    ) then
-      create trigger trg_empresas_seed_modules
-        after insert on public.empresas
-        for each row
-        execute function public.tg_empresas_seed_modules();
-    end if;
-  end if;
-end$$;
 
 commit;
