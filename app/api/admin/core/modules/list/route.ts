@@ -45,8 +45,6 @@ function parseCookieHeader(cookieHeader: string | null): Record<string, string> 
 }
 
 function readChunkedCookie(cookies: Record<string, string>, baseName: string): string | null {
-  // Ex.: baseName="sb-xxx-auth-token"
-  // procura sb-xxx-auth-token.0, .1, .2...
   const parts = Object.keys(cookies)
     .filter((k) => k === baseName || k.startsWith(baseName + "."))
     .sort((a, b) => {
@@ -79,9 +77,7 @@ function tryBase64Json(s: string): any | null {
   const val = s.startsWith("base64-") ? s.slice("base64-".length) : s;
   try {
     const text =
-      typeof Buffer !== "undefined"
-        ? Buffer.from(val, "base64").toString("utf8")
-        : atob(val);
+      typeof Buffer !== "undefined" ? Buffer.from(val, "base64").toString("utf8") : atob(val);
     return tryJson(text);
   } catch {
     return null;
@@ -90,29 +86,20 @@ function tryBase64Json(s: string): any | null {
 
 function extractAccessTokenFromCookieValue(rawVal: string): string | null {
   const decoded = decodeMaybe(rawVal);
-
-  // 1) JSON direto
   const j1 = tryJson(decoded);
-
-  // 2) base64 JSON
   const j2 = j1 ? null : tryBase64Json(decoded);
-
   const payload = j1 ?? j2;
   const token = payload?.access_token ?? payload?.currentSession?.access_token ?? null;
-
   return typeof token === "string" && token.length > 20 ? token : null;
 }
 
 function getAccessTokenFromCookies(req: Request): string | null {
   const cookies = parseCookieHeader(req.headers.get("cookie"));
 
-  // Supabase costuma usar sb-<projectRef>-auth-token[.N]
-  // e em alguns setups sb-<projectRef>-access-token[.N]
   const candidates = Object.keys(cookies)
     .filter((k) => k.startsWith("sb-") && (k.includes("auth-token") || k.includes("access-token")))
     .map((k) => (k.includes(".") ? k.slice(0, k.lastIndexOf(".")) : k));
 
-  // baseNames únicos
   const baseNames = Array.from(new Set(candidates));
 
   for (const base of baseNames) {
@@ -158,4 +145,26 @@ export async function GET(req: Request) {
     if (!empresaId) return NextResponse.json({ error: "MISSING_EMPRESA_ID" }, { status: 400 });
 
     const accessToken = getAccessToken(req);
-    if (!accessToken) return NextResponse.json({ error: "MISSING_SESSION" }_
+    if (!accessToken) return NextResponse.json({ error: "MISSING_SESSION" }, { status: 401 });
+
+    const adminCheck = await assertAdmin(accessToken, empresaId);
+    if (!adminCheck.ok) return NextResponse.json({ error: adminCheck.error }, { status: adminCheck.status });
+
+    const admin = supabaseAdmin();
+
+    const { error: seedErr } = await admin.rpc("moduz_core_seed_modules", { p_empresa_id: empresaId });
+    if (seedErr) return NextResponse.json({ error: "SEED_FAILED", details: seedErr.message }, { status: 500 });
+
+    const { data, error } = await admin
+      .from("modules_enabled")
+      .select("module_key, enabled, enabled_at, updated_at")
+      .eq("empresa_id", empresaId)
+      .order("module_key", { ascending: true });
+
+    if (error) return NextResponse.json({ error: "DB_ERROR", details: error.message }, { status: 500 });
+
+    return NextResponse.json({ empresa_id: empresaId, modules: data ?? [] } as Json, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ error: "UNEXPECTED", details: e?.message ?? String(e) }, { status: 500 });
+  }
+}
