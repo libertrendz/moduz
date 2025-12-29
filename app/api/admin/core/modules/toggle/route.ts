@@ -81,11 +81,20 @@ function extractAccessToken(raw: string): string | null {
   return null;
 }
 
-function getAccessTokenFromCookies(): string | null {
+function getAllCookies(): Record<string, string> {
   const store = nextCookies();
-  const allList = store.getAll();
+  const list = store.getAll();
   const all: Record<string, string> = {};
-  for (const c of allList) all[c.name] = c.value;
+  for (let i = 0; i < list.length; i++) all[list[i].name] = list[i].value;
+  return all;
+}
+
+function uniquePush(arr: string[], v: string) {
+  if (arr.indexOf(v) === -1) arr.push(v);
+}
+
+function getAccessTokenFromCookies(): string | null {
+  const all = getAllCookies();
 
   for (const k of ["sb-access-token", "sb:token"]) {
     if (all[k]) {
@@ -94,15 +103,19 @@ function getAccessTokenFromCookies(): string | null {
     }
   }
 
-  const bases = new Set<string>();
-  for (const name of Object.keys(all)) {
-    if (!name.startsWith("sb-")) continue;
-    if (!(name.includes("auth-token") || name.includes("access-token"))) continue;
-    bases.add(name.includes(".") ? name.slice(0, name.lastIndexOf(".")) : name);
+  const bases: string[] = [];
+  const names = Object.keys(all);
+
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    if (name.indexOf("sb-") !== 0) continue;
+    if (name.indexOf("auth-token") === -1 && name.indexOf("access-token") === -1) continue;
+    const base = name.indexOf(".") !== -1 ? name.slice(0, name.lastIndexOf(".")) : name;
+    uniquePush(bases, base);
   }
 
-  for (const base of bases) {
-    const combined = readChunkedCookie(all, base);
+  for (let i = 0; i < bases.length; i++) {
+    const combined = readChunkedCookie(all, bases[i]);
     if (!combined) continue;
     const tok = extractAccessToken(combined);
     if (tok) return tok;
@@ -131,7 +144,7 @@ async function assertAdmin(accessToken: string, empresaId: string) {
   return { ok: true as const, userId: userRes.user.id, profileId: profile.id };
 }
 
-const VALID_MODULES = new Set(["core", "docs", "people", "track", "finance", "bizz", "stock", "assets", "flow"]);
+const VALID_MODULES: string[] = ["core", "docs", "people", "track", "finance", "bizz", "stock", "assets", "flow"];
 
 export async function POST(req: Request) {
   try {
@@ -148,7 +161,7 @@ export async function POST(req: Request) {
     const moduleKey = String(body?.module_key ?? body?.modulo ?? "").trim().toLowerCase();
     const enabled = Boolean(body?.enabled ?? body?.ativo);
 
-    if (!VALID_MODULES.has(moduleKey)) return NextResponse.json({ error: "INVALID_MODULE_KEY" }, { status: 400 });
+    if (VALID_MODULES.indexOf(moduleKey) === -1) return NextResponse.json({ error: "INVALID_MODULE_KEY" }, { status: 400 });
     if (moduleKey === "core" && enabled === false) return NextResponse.json({ error: "CORE_CANNOT_BE_DISABLED" }, { status: 400 });
 
     const admin = supabaseAdmin();
@@ -157,7 +170,7 @@ export async function POST(req: Request) {
     if (seedErr) return NextResponse.json({ error: "SEED_FAILED", details: seedErr.message }, { status: 500 });
 
     const patch: Record<string, any> = { empresa_id: empresaId, module_key: moduleKey, enabled };
-    if (enabled) patch.enabled_at = new Date().toISOString(); // enabled_at é NOT NULL
+    if (enabled) patch.enabled_at = new Date().toISOString(); // NOT NULL
 
     const { data, error } = await admin
       .from("modules_enabled")
@@ -167,7 +180,6 @@ export async function POST(req: Request) {
 
     if (error) return NextResponse.json({ error: "DB_ERROR", details: error.message }, { status: 500 });
 
-    // audit_log é opcional: não bloqueia se não existir
     const { error: auditErr } = await admin.from("audit_log").insert({
       empresa_id: empresaId,
       actor_user_id: adminCheck.userId,
