@@ -1,18 +1,11 @@
 import { NextResponse } from "next/server";
-import { cookies as nextCookies } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 function env(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env: ${name}`);
   return v;
-}
-
-function supabaseAnonWithToken(token: string) {
-  return createClient(env("NEXT_PUBLIC_SUPABASE_URL"), env("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
-    auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
 }
 
 function supabaseAdmin() {
@@ -25,115 +18,12 @@ function getEmpresaId(req: Request): string | null {
   return req.headers.get("x-empresa-id") || req.headers.get("X-Empresa-Id");
 }
 
-function getBearer(req: Request): string | null {
-  const h = req.headers.get("authorization") || req.headers.get("Authorization");
-  if (!h) return null;
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m?.[1] ?? null;
-}
-
-function isJwtLike(s: string): boolean {
-  const t = (s ?? "").trim();
-  if (!t.startsWith("eyJ")) return false;
-  const parts = t.split(".");
-  return parts.length === 3 && parts[0].length > 10;
-}
-
-function decodeMaybe(s: string): string {
-  try {
-    return decodeURIComponent(s);
-  } catch {
-    return s;
-  }
-}
-
-function readChunkedCookie(all: Record<string, string>, base: string): string | null {
-  const keys = Object.keys(all).filter((k) => k === base || k.startsWith(base + "."));
-  if (keys.length === 0) return null;
-
-  keys.sort((a, b) => {
-    const ai = a.includes(".") ? Number(a.split(".").pop()) : -1;
-    const bi = b.includes(".") ? Number(b.split(".").pop()) : -1;
-    return ai - bi;
-  });
-
-  return keys.map((k) => all[k] ?? "").join("");
-}
-
-function extractAccessToken(raw: string): string | null {
-  const decoded = decodeMaybe(raw);
-  if (isJwtLike(decoded)) return decoded;
-
-  try {
-    const j = JSON.parse(decoded);
-    const tok = j?.access_token ?? j?.currentSession?.access_token;
-    if (typeof tok === "string" && tok.length > 20) return tok;
-  } catch {}
-
-  try {
-    const val = decoded.startsWith("base64-") ? decoded.slice("base64-".length) : decoded;
-    const txt = Buffer.from(val, "base64").toString("utf8");
-    const j = JSON.parse(txt);
-    const tok = j?.access_token ?? j?.currentSession?.access_token;
-    if (typeof tok === "string" && tok.length > 20) return tok;
-  } catch {}
-
-  return null;
-}
-
-function getAllCookies(): Record<string, string> {
-  const store = nextCookies();
-  const list = store.getAll();
-  const all: Record<string, string> = {};
-  for (let i = 0; i < list.length; i++) all[list[i].name] = list[i].value;
-  return all;
-}
-
-function uniquePush(arr: string[], v: string) {
-  if (arr.indexOf(v) === -1) arr.push(v);
-}
-
-function getAccessTokenFromCookies(): string | null {
-  const all = getAllCookies();
-
-  for (const k of ["sb-access-token", "sb:token"]) {
-    if (all[k]) {
-      const tok = extractAccessToken(all[k]);
-      if (tok) return tok;
-    }
-  }
-
-  const bases: string[] = [];
-  const names = Object.keys(all);
-
-  for (let i = 0; i < names.length; i++) {
-    const name = names[i];
-    if (name.indexOf("sb-") !== 0) continue;
-    if (name.indexOf("auth-token") === -1 && name.indexOf("access-token") === -1) continue;
-    const base = name.indexOf(".") !== -1 ? name.slice(0, name.lastIndexOf(".")) : name;
-    uniquePush(bases, base);
-  }
-
-  for (let i = 0; i < bases.length; i++) {
-    const combined = readChunkedCookie(all, bases[i]);
-    if (!combined) continue;
-    const tok = extractAccessToken(combined);
-    if (tok) return tok;
-  }
-
-  return null;
-}
-
-async function assertAdmin(accessToken: string, empresaId: string) {
-  const anon = supabaseAnonWithToken(accessToken);
-  const { data: userRes, error: userErr } = await anon.auth.getUser();
-  if (userErr || !userRes?.user) return { ok: false as const, status: 401, error: "UNAUTHENTICATED" as const };
-
+async function assertAdmin(userId: string, empresaId: string) {
   const admin = supabaseAdmin();
   const { data: profile, error: profErr } = await admin
     .from("profiles")
     .select("id, papel, ativo")
-    .eq("user_id", userRes.user.id)
+    .eq("user_id", userId)
     .eq("empresa_id", empresaId)
     .maybeSingle();
 
@@ -141,36 +31,52 @@ async function assertAdmin(accessToken: string, empresaId: string) {
   if (!profile || profile.ativo === false) return { ok: false as const, status: 403, error: "NO_PROFILE" as const };
   if (profile.papel !== "admin") return { ok: false as const, status: 403, error: "NOT_ADMIN" as const };
 
-  return { ok: true as const, userId: userRes.user.id, profileId: profile.id };
+  return { ok: true as const, profileId: profile.id };
 }
 
-const VALID_MODULES: string[] = ["core", "docs", "people", "track", "finance", "bizz", "stock", "assets", "flow"];
+const VALID_MODULES = ["core", "docs", "people", "track", "finance", "bizz", "stock", "assets", "flow"];
 
 export async function POST(req: Request) {
   try {
     const empresaId = getEmpresaId(req);
     if (!empresaId) return NextResponse.json({ error: "MISSING_EMPRESA_ID" }, { status: 400 });
 
-    const accessToken = getBearer(req) ?? getAccessTokenFromCookies();
-    if (!accessToken) return NextResponse.json({ error: "MISSING_SESSION" }, { status: 401 });
+    // ✅ Auth via SSR cookies (Supabase oficial)
+    const supabase = createSupabaseServerClient();
+    const { data: userRes, error: userErr } = await supabase.auth.getUser();
 
-    const adminCheck = await assertAdmin(accessToken, empresaId);
+    const user = userRes?.user;
+    if (userErr || !user) return NextResponse.json({ error: "MISSING_SESSION" }, { status: 401 });
+
+    const adminCheck = await assertAdmin(user.id, empresaId);
     if (!adminCheck.ok) return NextResponse.json({ error: adminCheck.error }, { status: adminCheck.status });
 
     const body = await req.json().catch(() => null);
     const moduleKey = String(body?.module_key ?? body?.modulo ?? "").trim().toLowerCase();
     const enabled = Boolean(body?.enabled ?? body?.ativo);
 
-    if (VALID_MODULES.indexOf(moduleKey) === -1) return NextResponse.json({ error: "INVALID_MODULE_KEY" }, { status: 400 });
-    if (moduleKey === "core" && enabled === false) return NextResponse.json({ error: "CORE_CANNOT_BE_DISABLED" }, { status: 400 });
+    if (VALID_MODULES.indexOf(moduleKey) === -1) {
+      return NextResponse.json({ error: "INVALID_MODULE_KEY" }, { status: 400 });
+    }
+    if (moduleKey === "core" && enabled === false) {
+      return NextResponse.json({ error: "CORE_CANNOT_BE_DISABLED" }, { status: 400 });
+    }
 
     const admin = supabaseAdmin();
 
+    // Seed idempotente
     const { error: seedErr } = await admin.rpc("moduz_core_seed_modules", { p_empresa_id: empresaId });
     if (seedErr) return NextResponse.json({ error: "SEED_FAILED", details: seedErr.message }, { status: 500 });
 
-    const patch: Record<string, any> = { empresa_id: empresaId, module_key: moduleKey, enabled };
-    if (enabled) patch.enabled_at = new Date().toISOString(); // NOT NULL
+    // enabled_at é NOT NULL no teu schema:
+    // - ao ligar: atualiza enabled_at para now()
+    // - ao desligar: mantém enabled_at (histórico)
+    const patch: Record<string, any> = {
+      empresa_id: empresaId,
+      module_key: moduleKey,
+      enabled,
+    };
+    if (enabled) patch.enabled_at = new Date().toISOString();
 
     const { data, error } = await admin
       .from("modules_enabled")
@@ -180,16 +86,22 @@ export async function POST(req: Request) {
 
     if (error) return NextResponse.json({ error: "DB_ERROR", details: error.message }, { status: 500 });
 
+    // audit_log (se existir): não bloqueia se falhar
     const { error: auditErr } = await admin.from("audit_log").insert({
       empresa_id: empresaId,
-      actor_user_id: adminCheck.userId,
+      actor_user_id: user.id,
       actor_profile_id: adminCheck.profileId,
       action: "MODULE_TOGGLED",
       entity: "modules_enabled",
       payload: { module_key: moduleKey, enabled },
     });
 
-    return NextResponse.json({ ok: true, module: data, audit: auditErr ? "FAILED" : "OK" });
+    return NextResponse.json({
+      ok: true,
+      module: data,
+      audit: auditErr ? "FAILED" : "OK",
+      audit_details: auditErr?.message ?? null,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: "UNEXPECTED", details: e?.message ?? String(e) }, { status: 500 });
   }
