@@ -17,10 +17,20 @@ import { useEffect, useState } from "react"
 
 type WhoAmI = {
   ok: boolean
+  cookie_names: string[]
   authed: boolean
   user_id: string | null
   auth_error: string | null
-  cookie_names: string[]
+}
+
+async function whoAmI(): Promise<WhoAmI | null> {
+  try {
+    const r = await fetch("/api/health/whoami", { credentials: "include" })
+    if (!r.ok) return null
+    return (await r.json()) as WhoAmI
+  } catch {
+    return null
+  }
 }
 
 export default function LoginPage() {
@@ -29,21 +39,11 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
-  async function fetchWhoAmI(): Promise<WhoAmI | null> {
-    try {
-      const r = await fetch("/api/health/whoami", { credentials: "include" })
-      if (!r.ok) return null
-      return (await r.json()) as WhoAmI
-    } catch {
-      return null
-    }
-  }
-
   useEffect(() => {
-    // Se já tiver sessão SSR (cookie), manda para /adm
+    // Se já tiver sessão SSR, manda para /adm
     ;(async () => {
-      const who = await fetchWhoAmI()
-      if (who?.authed) window.location.replace("/adm")
+      const w = await whoAmI()
+      if (w?.authed) window.location.replace("/adm")
     })()
   }, [])
 
@@ -52,18 +52,15 @@ export default function LoginPage() {
     setMsg(null)
     setLoading(true)
 
-    // sanitização mínima (contrato)
-    const safeEmail = email.trim().toLowerCase()
-    const safePassword = password // não trim (password pode conter espaços)
-
-    if (!safeEmail || !safePassword) {
-      setMsg("Preencha email e palavra-passe.")
-      setLoading(false)
-      return
-    }
-
     try {
-      // Login server-side: grava cookies sb-* no response
+      const safeEmail = email.trim().toLowerCase()
+      const safePassword = password
+
+      if (!safeEmail || !safePassword) {
+        setMsg("Preencha email e palavra-passe.")
+        return
+      }
+
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -78,16 +75,13 @@ export default function LoginPage() {
         return
       }
 
-      // Valida que a sessão SSR realmente existe (evita falso positivo)
-      const who = await fetchWhoAmI()
-      if (!who?.authed) {
-        setMsg(
-          "Login concluído, mas a sessão SSR não foi criada (cookies ausentes). Verifique o domínio/HTTPS e tente novamente."
-        )
+      // valida que cookies SSR foram realmente criados
+      const w = await whoAmI()
+      if (!w?.authed) {
+        setMsg("Login concluído, mas a sessão SSR não foi criada (cookies sb-* ausentes).")
         return
       }
 
-      // ok → entra no admin
       window.location.replace("/adm")
     } catch (err: any) {
       setMsg(err?.message || "Erro inesperado no login.")
