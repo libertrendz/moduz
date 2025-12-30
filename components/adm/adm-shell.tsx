@@ -178,7 +178,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
             <a href="/adm" className="flex items-center gap-3">
               {logoOk ? (
                 <img
-                  src="/brand/moduzplus-wordmark.png"
+                  src="/brand/moduzplus-wordmark-ret.png"
                   alt="Moduz+"
                   className="h-10 w-auto md:h-12 shrink-0"
                   onError={() => setLogoOk(false)}
