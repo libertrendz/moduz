@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createSupabaseServerClient } from "../../../lib/supabase/server";
+import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 
 export async function GET() {
   const cookieStore = cookies();
