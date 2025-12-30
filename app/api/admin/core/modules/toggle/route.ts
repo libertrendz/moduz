@@ -27,7 +27,14 @@ async function assertAdmin(userId: string, empresaId: string) {
     .eq("empresa_id", empresaId)
     .maybeSingle();
 
-  if (profErr) return { ok: false as const, status: 500, error: "PROFILE_LOOKUP_FAILED" as const };
+  if (profErr) {
+  return {
+    ok: false as const,
+    status: 500,
+    error: "PROFILE_LOOKUP_FAILED" as const,
+    details: profErr.message,
+  };
+}
   if (!profile || profile.ativo === false) return { ok: false as const, status: 403, error: "NO_PROFILE" as const };
   if (profile.papel !== "admin") return { ok: false as const, status: 403, error: "NOT_ADMIN" as const };
 
