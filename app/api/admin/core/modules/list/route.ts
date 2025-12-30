@@ -29,7 +29,14 @@ async function assertAdmin(userId: string, empresaId: string) {
     .eq("empresa_id", empresaId)
     .maybeSingle();
 
-  if (profErr) return { ok: false as const, status: 500, error: "PROFILE_LOOKUP_FAILED" as const };
+if (profErr) {
+  return {
+    ok: false as const,
+    status: 500,
+    error: "PROFILE_LOOKUP_FAILED" as const,
+    details: profErr.message,
+  };
+}
   if (!profile || profile.ativo === false) return { ok: false as const, status: 403, error: "NO_PROFILE" as const };
   if (profile.papel !== "admin") return { ok: false as const, status: 403, error: "NOT_ADMIN" as const };
 
@@ -48,7 +55,10 @@ export async function GET(req: Request) {
     if (userErr || !user) return NextResponse.json({ error: "MISSING_SESSION" }, { status: 401 });
 
     const adminCheck = await assertAdmin(user.id, empresaId);
-    if (!adminCheck.ok) return NextResponse.json({ error: adminCheck.error }, { status: adminCheck.status });
+    if (!adminCheck.ok) return NextResponse.json(
+  { error: adminCheck.error, details: (adminCheck as any).details ?? null },
+  { status: adminCheck.status }
+);
 
     const admin = supabaseAdmin();
 
