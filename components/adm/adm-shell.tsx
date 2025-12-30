@@ -8,19 +8,35 @@
  *  - Carrega contexto (empresas) e define empresa ativa automaticamente
  *  - Carrega módulos enabled da empresa
  *  - Renderiza menu curto e dinâmico
+ *  - Aplica wordmark (public/brand)
  * =============================================
  */
 
 "use client"
 
 import * as React from "react"
-import { EmpresaSwitcher, type EmpresaItem, getEmpresaIdFromStorage, setEmpresaIdToStorage } from "./empresa-switcher"
+import {
+  EmpresaSwitcher,
+  type EmpresaItem,
+  getEmpresaIdFromStorage,
+  setEmpresaIdToStorage,
+} from "./empresa-switcher"
 
 type CoreContextResponse =
-  | { ok: true; user_id: string; empresas: EmpresaItem[]; default_empresa_id: string | null }
+  | {
+      ok: true
+      user_id: string
+      empresas: EmpresaItem[]
+      default_empresa_id: string | null
+    }
   | { ok: false; error: string; details?: string | null }
 
-type ModuleRow = { module_key: string; enabled: boolean; enabled_at: string | null; updated_at: string | null }
+type ModuleRow = {
+  module_key: string
+  enabled: boolean
+  enabled_at: string | null
+  updated_at: string | null
+}
 type ModulesListResponse =
   | { empresa_id: string; modules: ModuleRow[] }
   | { error: string; details?: string | null }
@@ -30,7 +46,7 @@ function classNames(...xs: Array<string | false | null | undefined>) {
 }
 
 const ROUTES_BY_MODULE: Record<string, { href: string; label: string }> = {
-  core: { href: "/adm/core/modulos", label: "Core" },
+  core: { href: "/adm", label: "Core" },
   docs: { href: "/adm/docs", label: "Docs" },
   people: { href: "/adm/people", label: "People" },
   track: { href: "/adm/track", label: "Track" },
@@ -53,12 +69,16 @@ export function AdmShell(props: { children: React.ReactNode }) {
   const [modulesEnabled, setModulesEnabled] = React.useState<string[]>([])
   const [modulesLoading, setModulesLoading] = React.useState(false)
 
+  const [logoOk, setLogoOk] = React.useState(true)
+
   async function loadContext() {
     setLoading(true)
     setErr(null)
 
     try {
-      const r = await fetch("/api/admin/core/context", { credentials: "include" })
+      const r = await fetch("/api/admin/core/context", {
+        credentials: "include",
+      })
       const j = (await r.json().catch(() => null)) as CoreContextResponse | null
 
       if (!r.ok || !j || j.ok === false) {
@@ -71,14 +91,13 @@ export function AdmShell(props: { children: React.ReactNode }) {
       const data = j as Extract<CoreContextResponse, { ok: true }>
       setEmpresas(Array.isArray(data.empresas) ? data.empresas : [])
 
-      // Define empresa ativa automaticamente:
-      // 1) localStorage (se válido)
-      // 2) default_empresa_id do server
-      // 3) primeira empresa
       const stored = getEmpresaIdFromStorage()
       const allowed = data.empresas?.some((e) => e.empresa_id === stored)
       const nextEmpresa =
-        (stored && allowed ? stored : null) ?? data.default_empresa_id ?? data.empresas?.[0]?.empresa_id ?? null
+        (stored && allowed ? stored : null) ??
+        data.default_empresa_id ??
+        data.empresas?.[0]?.empresa_id ??
+        null
 
       if (nextEmpresa) {
         setEmpresaId(nextEmpresa)
@@ -113,7 +132,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
       if ("modules" in j && Array.isArray(j.modules)) {
         const enabled = j.modules.filter((m) => m.enabled).map((m) => m.module_key)
-        // core sempre aparece
         if (!enabled.includes("core")) enabled.unshift("core")
         setModulesEnabled(enabled)
       } else {
@@ -143,15 +161,11 @@ export function AdmShell(props: { children: React.ReactNode }) {
   }
 
   const visibleMenu = React.useMemo(() => {
-    // menu curto: core sempre + enabled
     const keys = modulesEnabled.length ? modulesEnabled : ["core"]
-    const items = keys
-      .map((k) => ROUTES_BY_MODULE[k])
-      .filter(Boolean)
-
-    // garante que Core vai para o topo
-    items.sort((a, b) => (a.label === "Core" ? -1 : b.label === "Core" ? 1 : a.label.localeCompare(b.label)))
-
+    const items = keys.map((k) => ROUTES_BY_MODULE[k]).filter(Boolean)
+    items.sort((a, b) =>
+      a.label === "Core" ? -1 : b.label === "Core" ? 1 : a.label.localeCompare(b.label)
+    )
     return items
   }, [modulesEnabled])
 
@@ -160,8 +174,17 @@ export function AdmShell(props: { children: React.ReactNode }) {
       <header className="sticky top-0 z-20 border-b border-slate-900 bg-black/70 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
           <div className="flex items-center gap-3">
-            <a href="/adm" className="text-sm font-semibold tracking-wide">
-              Moduz+
+            <a href="/adm" className="flex items-center gap-3">
+              {logoOk ? (
+                <img
+                  src="/brand/moduzplus-wordmark-320w.png"
+                  alt="Moduz+"
+                  className="h-6 w-auto"
+                  onError={() => setLogoOk(false)}
+                />
+              ) : (
+                <span className="text-sm font-semibold tracking-wide">Moduz+</span>
+              )}
             </a>
             <span className="hidden md:inline text-xs text-slate-500">ERP modular</span>
           </div>
@@ -172,7 +195,11 @@ export function AdmShell(props: { children: React.ReactNode }) {
             ) : err ? (
               <span className="text-xs text-red-300">{err}</span>
             ) : (
-              <EmpresaSwitcher empresas={empresas} activeEmpresaId={empresaId} onChangeEmpresaId={onChangeEmpresaId} />
+              <EmpresaSwitcher
+                empresas={empresas}
+                activeEmpresaId={empresaId}
+                onChangeEmpresaId={onChangeEmpresaId}
+              />
             )}
 
             <a
