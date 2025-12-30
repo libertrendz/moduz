@@ -55,7 +55,10 @@ export async function POST(req: Request) {
     if (userErr || !user) return NextResponse.json({ error: "MISSING_SESSION" }, { status: 401 });
 
     const adminCheck = await assertAdmin(user.id, empresaId);
-    if (!adminCheck.ok) return NextResponse.json({ error: adminCheck.error }, { status: adminCheck.status });
+    if (!adminCheck.ok) return NextResponse.json(
+  { error: adminCheck.error, details: (adminCheck as any).details ?? null },
+  { status: adminCheck.status }
+);
 
     const body = await req.json().catch(() => null);
     const moduleKey = String(body?.module_key ?? body?.modulo ?? "").trim().toLowerCase();
