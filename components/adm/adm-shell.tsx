@@ -3,12 +3,12 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu dinâmico (v1)
+ * Etapa: Layout + Menu dinâmico (v2)
  * Descrição:
  *  - Carrega contexto (empresas) e define empresa ativa automaticamente
  *  - Carrega módulos enabled da empresa
- *  - Renderiza menu curto e dinâmico
- *  - Aplica wordmark (public/brand)
+ *  - Menu curto e dinâmico (somente enabled + implemented)
+ *  - Wordmark aplicado (public/brand)
  * =============================================
  */
 
@@ -21,6 +21,7 @@ import {
   getEmpresaIdFromStorage,
   setEmpresaIdToStorage,
 } from "./empresa-switcher"
+import { MODULES, ROUTES_BY_MODULE } from "./module-registry"
 
 type CoreContextResponse =
   | {
@@ -43,18 +44,6 @@ type ModulesListResponse =
 
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ")
-}
-
-const ROUTES_BY_MODULE: Record<string, { href: string; label: string }> = {
-  core: { href: "/adm", label: "Core" },
-  docs: { href: "/adm/docs", label: "Docs" },
-  people: { href: "/adm/people", label: "People" },
-  track: { href: "/adm/track", label: "Track" },
-  finance: { href: "/adm/finance", label: "Finance" },
-  bizz: { href: "/adm/bizz", label: "Bizz" },
-  stock: { href: "/adm/stock", label: "Stock" },
-  assets: { href: "/adm/assets", label: "Assets" },
-  flow: { href: "/adm/flow", label: "Flow" },
 }
 
 export function AdmShell(props: { children: React.ReactNode }) {
@@ -161,11 +150,23 @@ export function AdmShell(props: { children: React.ReactNode }) {
   }
 
   const visibleMenu = React.useMemo(() => {
-    const keys = modulesEnabled.length ? modulesEnabled : ["core"]
+    // Regra Moduz:
+    // - só mostrar módulos habilitados (enabled)
+    // - e que existam no código (implemented=true)
+    // - Core sempre aparece
+    const enabled = modulesEnabled.length ? modulesEnabled : ["core"]
+
+    const keys = enabled.filter((k) => {
+      if (k === "core") return true
+      const meta = MODULES[k]
+      return Boolean(meta?.implemented)
+    })
+
     const items = keys.map((k) => ROUTES_BY_MODULE[k]).filter(Boolean)
     items.sort((a, b) =>
       a.label === "Core" ? -1 : b.label === "Core" ? 1 : a.label.localeCompare(b.label)
     )
+
     return items
   }, [modulesEnabled])
 
@@ -179,11 +180,11 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 <img
                   src="/brand/moduzplus-wordmark-320w.png"
                   alt="Moduz+"
-                  className="h-6 w-auto"
+                  className="h-8 w-auto md:h-9"
                   onError={() => setLogoOk(false)}
                 />
               ) : (
-                <span className="text-sm font-semibold tracking-wide">Moduz+</span>
+                <span className="text-base font-semibold tracking-wide">Moduz+</span>
               )}
             </a>
             <span className="hidden md:inline text-xs text-slate-500">ERP modular</span>
@@ -204,7 +205,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
             <a
               href="/adm/core/modulos"
-              className="rounded-md border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-slate-200 hover:bg-slate-900"
+              className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
               title="Gestão de Módulos"
             >
               Módulos
@@ -222,7 +223,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
                   key={it.href}
                   href={it.href}
                   className={classNames(
-                    "rounded-md border px-3 py-1 text-sm",
+                    "rounded-md border px-3 py-1.5 text-sm",
                     "border-slate-900 bg-slate-950 text-slate-200 hover:bg-slate-900"
                   )}
                 >
