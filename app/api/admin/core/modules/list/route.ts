@@ -1,3 +1,16 @@
+/**
+ * =============================================
+ * Moduz+ | API Admin
+ * Arquivo: app/api/admin/core/modules/list/route.ts
+ * Módulo: Core (Gestão de Módulos)
+ * Etapa: Listar módulos habilitados (v1)
+ * Descrição:
+ *  - Autentica via Supabase SSR (cookies)
+ *  - Verifica perfil admin em public.profiles por empresa_id + user_id
+ *  - Garante seed idempotente e retorna modules_enabled
+ * =============================================
+ */
+
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "../../../../../../lib/supabase/server";
@@ -22,23 +35,25 @@ function getEmpresaId(req: Request): string | null {
 
 async function assertAdmin(userId: string, empresaId: string) {
   const admin = supabaseAdmin();
+
   const { data: profile, error: profErr } = await admin
     .from("profiles")
-    .select("id, papel, ativo")
+    .select("id, role, ativo")
     .eq("user_id", userId)
     .eq("empresa_id", empresaId)
     .maybeSingle();
 
-if (profErr) {
-  return {
-    ok: false as const,
-    status: 500,
-    error: "PROFILE_LOOKUP_FAILED" as const,
-    details: profErr.message,
-  };
-}
-  if (!profile || profile.ativo === false) return { ok: false as const, status: 403, error: "NO_PROFILE" as const };
-  if (profile.papel !== "admin") return { ok: false as const, status: 403, error: "NOT_ADMIN" as const };
+  if (profErr) {
+    return { ok: false as const, status: 500, error: "PROFILE_LOOKUP_FAILED" as const, details: profErr.message };
+  }
+
+  if (!profile || profile.ativo === false) {
+    return { ok: false as const, status: 403, error: "NO_PROFILE" as const };
+  }
+
+  if (profile.role !== "admin") {
+    return { ok: false as const, status: 403, error: "NOT_ADMIN" as const };
+  }
 
   return { ok: true as const, profileId: profile.id };
 }
@@ -55,10 +70,12 @@ export async function GET(req: Request) {
     if (userErr || !user) return NextResponse.json({ error: "MISSING_SESSION" }, { status: 401 });
 
     const adminCheck = await assertAdmin(user.id, empresaId);
-    if (!adminCheck.ok) return NextResponse.json(
-  { error: adminCheck.error, details: (adminCheck as any).details ?? null },
-  { status: adminCheck.status }
-);
+    if (!adminCheck.ok) {
+      return NextResponse.json(
+        { error: adminCheck.error, details: (adminCheck as any).details ?? null },
+        { status: adminCheck.status }
+      );
+    }
 
     const admin = supabaseAdmin();
 
