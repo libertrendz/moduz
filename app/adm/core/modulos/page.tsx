@@ -3,17 +3,18 @@
  * Moduz+ | Gestão de Módulos
  * Arquivo: app/adm/core/modulos/page.tsx
  * Módulo: Core
- * Etapa: UI List + Toggle (v1)
+ * Etapa: UI List + Toggle (v2)
  * Descrição:
- *  - Lista módulos habilitados por empresa
+ *  - Lista módulos por empresa
  *  - Toggle com feedback, loading e tratamento de erro
- *  - Requer sessão SSR (cookies) e header x-empresa-id
+ *  - Regra Moduz: não permite ativar módulos não implementados (badge "Em breve")
  * =============================================
  */
 
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { MODULES, MODULE_ORDER } from "../../../../components/adm/module-registry"
 
 type ModuleRow = {
   module_key: string
@@ -31,27 +32,10 @@ type ToggleResponse =
   | { ok: true; module: ModuleRow; audit?: string; audit_details?: string | null }
   | { error: string; details?: string | null }
 
-const MODULE_META: Record<
-  string,
-  { title: string; desc: string; locked?: boolean }
-> = {
-  core: { title: "Core", desc: "Base do sistema: empresas, perfis, settings, módulos e auditoria.", locked: true },
-  docs: { title: "Docs", desc: "Repositório universal de documentos integrado ao Storage." },
-  people: { title: "People", desc: "Colaboradores, recrutamento (ATS) e gestão de pessoas." },
-  track: { title: "Track", desc: "Ponto e tracking de tempo/atividades." },
-  finance: { title: "Finance", desc: "Contas, pagamentos, lançamentos e conciliações (fase 1)." },
-  bizz: { title: "Bizz", desc: "Orçamentos, contratos e ciclo comercial." },
-  stock: { title: "Stock", desc: "Inventário, entradas/saídas e movimentações." },
-  assets: { title: "Assets", desc: "Ativos, manutenção e ciclo de vida." },
-  flow: { title: "Flow", desc: "Projetos/processos/execução (transversal)." },
-}
-
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ")
 }
 
-// v1: empresa_id guardado no browser.
-// Ponto único para depois plugar num “empresa switcher” oficial do Core.
 function getEmpresaId(): string | null {
   try {
     const v = window.localStorage.getItem("moduz_empresa_id")
@@ -64,8 +48,7 @@ function getEmpresaId(): string | null {
 function formatDt(v: string | null) {
   if (!v) return "—"
   try {
-    const d = new Date(v)
-    return d.toLocaleString("pt-PT")
+    return new Date(v).toLocaleString("pt-PT")
   } catch {
     return v
   }
@@ -82,11 +65,8 @@ export default function ModulosPage() {
   const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null)
 
   const sortedRows = useMemo(() => {
-    const order = ["core", "docs", "people", "track", "finance", "bizz", "stock", "assets", "flow"]
     const map = new Map(rows.map((r) => [r.module_key, r]))
-    return order
-      .map((k) => map.get(k))
-      .filter(Boolean) as ModuleRow[]
+    return MODULE_ORDER.map((k) => map.get(k)).filter(Boolean) as ModuleRow[]
   }, [rows])
 
   async function load() {
@@ -98,7 +78,7 @@ export default function ModulosPage() {
 
       if (!eid) {
         setRows([])
-        setErr("EMPRESA_ID_AUSENTE: defina moduz_empresa_id no localStorage para esta v1.")
+        setErr("EMPRESA_ID_AUSENTE: contexto não definiu empresa ativa.")
         return
       }
 
@@ -112,7 +92,9 @@ export default function ModulosPage() {
 
       if (!r.ok) {
         const msg =
-          (j as any)?.error ? `${(j as any).error}${(j as any).details ? `: ${(j as any).details}` : ""}` : "Falha ao carregar."
+          (j as any)?.error
+            ? `${(j as any).error}${(j as any).details ? `: ${(j as any).details}` : ""}`
+            : "Falha ao carregar."
         setErr(msg)
         setRows([])
         return
@@ -130,12 +112,21 @@ export default function ModulosPage() {
 
   async function toggle(module_key: string, enabled: boolean) {
     if (!empresaId) {
-      setToast({ kind: "err", msg: "Empresa não definida (moduz_empresa_id)." })
+      setToast({ kind: "err", msg: "Empresa não definida." })
       return
     }
 
-    if (MODULE_META[module_key]?.locked) {
+    const meta = MODULES[module_key]
+    const locked = Boolean(meta?.locked)
+    const implemented = Boolean(meta?.implemented)
+
+    if (locked) {
       setToast({ kind: "err", msg: "O módulo Core não pode ser desativado." })
+      return
+    }
+
+    if (!implemented) {
+      setToast({ kind: "err", msg: "Módulo ainda não disponível (Em breve)." })
       return
     }
 
@@ -163,7 +154,6 @@ export default function ModulosPage() {
       }
 
       if ("ok" in j && j.ok === true) {
-        // aplica retorno real do servidor
         setRows((prev) => prev.map((x) => (x.module_key === module_key ? j.module : x)))
         setToast({ kind: "ok", msg: `Módulo "${module_key}" atualizado.` })
         return
@@ -196,11 +186,11 @@ export default function ModulosPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-50">Gestão de Módulos</h1>
           <p className="mt-2 text-sm text-slate-400">
-            Ative/desative módulos por empresa. O Core é obrigatório. Sessão SSR via cookies.
+            Ative/desative módulos por empresa. Core é obrigatório. Módulos “Em breve” não podem ser ativados.
           </p>
           <p className="mt-2 text-xs text-slate-500">
             Empresa:{" "}
-            <span className="font-mono text-slate-300">{empresaId ?? "— (defina moduz_empresa_id no localStorage)"}</span>
+            <span className="font-mono text-slate-300">{empresaId ?? "—"}</span>
           </p>
         </div>
 
@@ -228,15 +218,6 @@ export default function ModulosPage() {
       {err ? (
         <div className="mt-4 rounded-lg border border-red-900/60 bg-red-950/30 p-3">
           <p className="text-sm text-red-200">{err}</p>
-          {err.includes("EMPRESA_ID_AUSENTE") ? (
-            <div className="mt-2 text-xs text-red-200/90">
-              <p className="mb-1">Defina no Console do browser:</p>
-              <pre className="overflow-auto rounded-md bg-black/40 p-2 text-[12px]">
-{`localStorage.setItem("moduz_empresa_id", "c50bc325-abef-42f3-9f47-4cf8dda834c4")`}
-              </pre>
-              <p className="mt-1">Depois clica “Atualizar”.</p>
-            </div>
-          ) : null}
         </div>
       ) : null}
 
@@ -255,28 +236,49 @@ export default function ModulosPage() {
         ) : (
           <ul>
             {sortedRows.map((m) => {
-              const meta = MODULE_META[m.module_key] ?? {
+              const meta = MODULES[m.module_key] ?? {
                 title: m.module_key,
                 desc: "—",
+                implemented: false,
               }
 
               const isBusy = busyKey === m.module_key
               const locked = Boolean(meta.locked)
+              const implemented = Boolean(meta.implemented)
+
+              const disableToggle = locked || isBusy || !implemented
 
               return (
-                <li key={m.module_key} className="grid grid-cols-12 gap-0 px-4 py-4 border-b border-slate-900 last:border-b-0">
+                <li
+                  key={m.module_key}
+                  className="grid grid-cols-12 gap-0 px-4 py-4 border-b border-slate-900 last:border-b-0"
+                >
                   <div className="col-span-5">
                     <div className="flex items-center gap-2">
-                      <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
+                      <div
+                        className={classNames(
+                          "h-2.5 w-2.5 rounded-full",
+                          m.enabled ? "bg-emerald-400" : "bg-slate-600"
+                        )}
+                      />
                       <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
+
                       <span className="ml-2 rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
                       </span>
+
                       {locked ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           obrigatório
                         </span>
                       ) : null}
+
+                      {!implemented ? (
+                        <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
+                          em breve
+                        </span>
+                      ) : null}
+
                       {isBusy ? (
                         <span className="text-[11px] text-slate-400">a atualizar…</span>
                       ) : null}
@@ -292,13 +294,20 @@ export default function ModulosPage() {
                   <div className="col-span-1 flex justify-end">
                     <button
                       onClick={() => toggle(m.module_key, !m.enabled)}
-                      disabled={isBusy || locked}
+                      disabled={disableToggle}
                       className={classNames(
                         "relative inline-flex h-6 w-11 items-center rounded-full border transition",
-                        locked || isBusy ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+                        disableToggle ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
                         m.enabled ? "bg-emerald-500/20 border-emerald-700" : "bg-slate-900 border-slate-700"
                       )}
                       aria-label={`Toggle ${m.module_key}`}
+                      title={
+                        locked
+                          ? "Obrigatório"
+                          : !implemented
+                          ? "Em breve"
+                          : "Ativar/desativar"
+                      }
                     >
                       <span
                         className={classNames(
@@ -319,8 +328,8 @@ export default function ModulosPage() {
         <h2 className="text-sm font-semibold text-slate-100">Notas</h2>
         <ul className="mt-2 list-disc pl-5 text-sm text-slate-400 space-y-1">
           <li>Core e Docs podem estar ativos por padrão (seed). O Core é bloqueado.</li>
-          <li>Esta v1 lê <span className="font-mono text-slate-300">empresa_id</span> do <span className="font-mono text-slate-300">localStorage</span> (chave <span className="font-mono text-slate-300">moduz_empresa_id</span>).</li>
-          <li>Próximo passo: “empresa switcher” oficial no Core e menu dinâmico por módulos.</li>
+          <li>Módulos marcados como <span className="font-mono text-slate-300">em breve</span> ainda não estão implementados na app.</li>
+          <li>O menu do /adm mostra apenas módulos <span className="font-mono text-slate-300">enabled</span> e <span className="font-mono text-slate-300">implemented</span>.</li>
         </ul>
       </div>
     </div>
