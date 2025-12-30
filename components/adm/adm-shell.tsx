@@ -180,7 +180,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 <img
                   src="/brand/moduzplus-wordmark-ret.png"
                   alt="Moduz+"
-                  className="h-10 w-auto md:h-12 shrink-0"
+                  className="h-12 w-auto md:h-14 shrink-0"
                   onError={() => setLogoOk(false)}
                 />
 
