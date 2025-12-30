@@ -1,3 +1,17 @@
+/**
+ * =============================================
+ * Moduz+ | API Admin
+ * Arquivo: app/api/admin/core/modules/toggle/route.ts
+ * Módulo: Core (Gestão de Módulos)
+ * Etapa: Toggle módulo (v1)
+ * Descrição:
+ *  - Autentica via Supabase SSR (cookies)
+ *  - Verifica perfil admin em public.profiles por empresa_id + user_id
+ *  - Seed idempotente antes de alterar
+ *  - Atualiza modules_enabled (enabled + enabled_at quando true)
+ * =============================================
+ */
+
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "../../../../../../lib/supabase/server";
@@ -20,23 +34,25 @@ function getEmpresaId(req: Request): string | null {
 
 async function assertAdmin(userId: string, empresaId: string) {
   const admin = supabaseAdmin();
+
   const { data: profile, error: profErr } = await admin
     .from("profiles")
-    .select("id, papel, ativo")
+    .select("id, role, ativo")
     .eq("user_id", userId)
     .eq("empresa_id", empresaId)
     .maybeSingle();
 
   if (profErr) {
-  return {
-    ok: false as const,
-    status: 500,
-    error: "PROFILE_LOOKUP_FAILED" as const,
-    details: profErr.message,
-  };
-}
-  if (!profile || profile.ativo === false) return { ok: false as const, status: 403, error: "NO_PROFILE" as const };
-  if (profile.papel !== "admin") return { ok: false as const, status: 403, error: "NOT_ADMIN" as const };
+    return { ok: false as const, status: 500, error: "PROFILE_LOOKUP_FAILED" as const, details: profErr.message };
+  }
+
+  if (!profile || profile.ativo === false) {
+    return { ok: false as const, status: 403, error: "NO_PROFILE" as const };
+  }
+
+  if (profile.role !== "admin") {
+    return { ok: false as const, status: 403, error: "NOT_ADMIN" as const };
+  }
 
   return { ok: true as const, profileId: profile.id };
 }
@@ -55,14 +71,16 @@ export async function POST(req: Request) {
     if (userErr || !user) return NextResponse.json({ error: "MISSING_SESSION" }, { status: 401 });
 
     const adminCheck = await assertAdmin(user.id, empresaId);
-    if (!adminCheck.ok) return NextResponse.json(
-  { error: adminCheck.error, details: (adminCheck as any).details ?? null },
-  { status: adminCheck.status }
-);
+    if (!adminCheck.ok) {
+      return NextResponse.json(
+        { error: adminCheck.error, details: (adminCheck as any).details ?? null },
+        { status: adminCheck.status }
+      );
+    }
 
     const body = await req.json().catch(() => null);
-    const moduleKey = String(body?.module_key ?? body?.modulo ?? "").trim().toLowerCase();
-    const enabled = Boolean(body?.enabled ?? body?.ativo);
+    const moduleKey = String(body?.module_key ?? "").trim().toLowerCase();
+    const enabled = Boolean(body?.enabled);
 
     if (VALID_MODULES.indexOf(moduleKey) === -1) {
       return NextResponse.json({ error: "INVALID_MODULE_KEY" }, { status: 400 });
@@ -81,7 +99,9 @@ export async function POST(req: Request) {
       module_key: moduleKey,
       enabled,
     };
-    if (enabled) patch.enabled_at = new Date().toISOString(); // enabled_at é NOT NULL
+
+    // enabled_at é NOT NULL no teu schema -> ao habilitar setamos agora; ao desabilitar mantemos
+    if (enabled) patch.enabled_at = new Date().toISOString();
 
     const { data, error } = await admin
       .from("modules_enabled")
@@ -91,6 +111,7 @@ export async function POST(req: Request) {
 
     if (error) return NextResponse.json({ error: "DB_ERROR", details: error.message }, { status: 500 });
 
+    // audit_log (se existir): não bloqueia se falhar
     const { error: auditErr } = await admin.from("audit_log").insert({
       empresa_id: empresaId,
       actor_user_id: user.id,
@@ -100,12 +121,10 @@ export async function POST(req: Request) {
       payload: { module_key: moduleKey, enabled },
     });
 
-    return NextResponse.json({
-      ok: true,
-      module: data,
-      audit: auditErr ? "FAILED" : "OK",
-      audit_details: auditErr?.message ?? null,
-    });
+    return NextResponse.json(
+      { ok: true, module: data, audit: auditErr ? "FAILED" : "OK", audit_details: auditErr?.message ?? null },
+      { status: 200 }
+    );
   } catch (e: any) {
     return NextResponse.json({ error: "UNEXPECTED", details: e?.message ?? String(e) }, { status: 500 });
   }
