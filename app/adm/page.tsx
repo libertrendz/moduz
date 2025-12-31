@@ -3,12 +3,13 @@
  * Moduz+ | Admin Home
  * Arquivo: app/adm/page.tsx
  * Módulo: Core
- * Etapa: Guard SSR + contexto (v3 - nomes restaurados)
+ * Etapa: Guard SSR + contexto (v4 - UI limpa)
  * Descrição:
  *  - Exige sessão SSR (cookies) e evita loop no mobile
  *  - Busca contexto via /api/admin/core/context (credentials: include)
  *  - Mostra email, display_name, role e nome da empresa ativa
  *  - Logout via /api/auth/sign-out (server) para limpar cookies SSR
+ *  - UI: remove texto técnico de debug (endpoints)
  * =============================================
  */
 
@@ -75,7 +76,7 @@ export default function AdmHomePage() {
 
         if (!res.ok || !json || json.ok === false) {
           if (!cancelled) {
-            setErr((json as any)?.error || "Falha ao carregar contexto do Core (SSR).")
+            setErr((json as any)?.error || "Falha ao carregar contexto.")
             setData(null)
           }
           return
@@ -129,9 +130,23 @@ export default function AdmHomePage() {
             <div>
               <h1 className="text-xl font-semibold text-slate-50">Admin • Moduz+</h1>
               <p className="mt-2 text-sm text-slate-400">
-                Core runtime (contexto via{" "}
-                <code className="text-slate-200">/api/admin/core/context</code>).
+                Gestão do Core, módulos e acesso. Configure a empresa ativa e avance por camadas.
               </p>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <a
+                  href="/adm/core/modulos"
+                  className="rounded-md border border-slate-800 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-800"
+                >
+                  Gestão de Módulos
+                </a>
+                <a
+                  href="/adm"
+                  className="rounded-md border border-slate-800 bg-slate-950 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-900"
+                >
+                  Atualizar
+                </a>
+              </div>
             </div>
 
             <button
