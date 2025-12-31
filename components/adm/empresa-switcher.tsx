@@ -3,11 +3,14 @@
  * Moduz+ | Empresa Switcher
  * Arquivo: components/adm/empresa-switcher.tsx
  * Módulo: Core (Contexto)
- * Etapa: Switcher UI (v1)
+ * Etapa: Switcher UI (v2)
  * Descrição:
  *  - Mostra empresas acessíveis ao utilizador
  *  - Persiste empresa ativa em localStorage (moduz_empresa_id)
- *  - Não depende de libs externas
+ *  - Compatível com contratos antigos e novos:
+ *      - empresa_nome (v1)
+ *      - nome (v2 /api/admin/core/context)
+ *  - UI: mostra nome; fallback para UUID curto
  * =============================================
  */
 
@@ -17,9 +20,12 @@ import * as React from "react"
 
 export type EmpresaItem = {
   empresa_id: string
-  role: string
   ativo: boolean
-  empresa_nome: string | null
+  role?: string | null
+
+  // compat
+  empresa_nome?: string | null // v1
+  nome?: string | null // v2
 }
 
 export function getEmpresaIdFromStorage(): string | null {
@@ -39,6 +45,12 @@ export function setEmpresaIdToStorage(v: string) {
   }
 }
 
+function shortId(id: string) {
+  if (!id) return "—"
+  if (id.length <= 12) return id
+  return `${id.slice(0, 8)}…${id.slice(-4)}`
+}
+
 export function EmpresaSwitcher(props: {
   empresas: EmpresaItem[]
   activeEmpresaId: string | null
@@ -50,21 +62,26 @@ export function EmpresaSwitcher(props: {
     return (empresas ?? []).filter((e) => e.ativo !== false)
   }, [empresas])
 
-  const current = options.find((x) => x.empresa_id === activeEmpresaId) ?? options[0] ?? null
+  const current =
+    options.find((x) => x.empresa_id === activeEmpresaId) ?? options[0] ?? null
 
   return (
     <div className="flex items-center gap-2">
       <span className="text-xs text-slate-400 hidden sm:inline">Empresa</span>
+
       <select
         className="max-w-[260px] truncate rounded-md border border-slate-800 bg-slate-950 px-2 py-1 text-sm text-slate-100"
         value={current?.empresa_id ?? ""}
         onChange={(e) => onChangeEmpresaId(e.target.value)}
       >
         {options.map((e) => {
-          const label = e.empresa_nome ? e.empresa_nome : e.empresa_id
+          const name = (e.nome ?? e.empresa_nome ?? "").trim()
+          const label = name || shortId(e.empresa_id)
+          const role = (e.role ?? "").trim()
+
           return (
             <option key={e.empresa_id} value={e.empresa_id}>
-              {label} ({e.role})
+              {role ? `${label} (${role})` : label}
             </option>
           )
         })}
