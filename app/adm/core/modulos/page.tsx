@@ -3,11 +3,12 @@
  * Moduz+ | Gestão de Módulos
  * Arquivo: app/adm/core/modulos/page.tsx
  * Módulo: Core
- * Etapa: UI List + Toggle (v2)
+ * Etapa: UI List + Toggle (v3 - responsivo)
  * Descrição:
  *  - Lista módulos por empresa
  *  - Toggle com feedback, loading e tratamento de erro
  *  - Regra Moduz: não permite ativar módulos não implementados (badge "Em breve")
+ *  - Responsivo: cards no mobile, tabela no desktop (evita sobreposição)
  * =============================================
  */
 
@@ -149,9 +150,7 @@ export default function ModulosPage() {
 
       const j = (await r.json().catch(() => null)) as ToggleResponse | null
 
-      if (!r.ok || !j) {
-        throw new Error((j as any)?.error || "Falha ao atualizar módulo.")
-      }
+      if (!r.ok || !j) throw new Error((j as any)?.error || "Falha ao atualizar módulo.")
 
       if ("ok" in j && j.ok === true) {
         setRows((prev) => prev.map((x) => (x.module_key === module_key ? j.module : x)))
@@ -181,7 +180,7 @@ export default function ModulosPage() {
   }, [toast])
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-50">Gestão de Módulos</h1>
@@ -189,8 +188,7 @@ export default function ModulosPage() {
             Ative/desative módulos por empresa. Core é obrigatório. Módulos “Em breve” não podem ser ativados.
           </p>
           <p className="mt-2 text-xs text-slate-500">
-            Empresa:{" "}
-            <span className="font-mono text-slate-300">{empresaId ?? "—"}</span>
+            Empresa: <span className="font-mono text-slate-300">{empresaId ?? "—"}</span>
           </p>
         </div>
 
@@ -221,7 +219,88 @@ export default function ModulosPage() {
         </div>
       ) : null}
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+      {/* MOBILE: cards (evita sobreposição) */}
+      <div className="mt-6 space-y-3 md:hidden">
+        {loading ? (
+          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-400">
+            A carregar…
+          </div>
+        ) : sortedRows.length === 0 ? (
+          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-400">
+            Sem módulos para mostrar.
+          </div>
+        ) : (
+          sortedRows.map((m) => {
+            const meta = MODULES[m.module_key] ?? {
+              title: m.module_key,
+              desc: "—",
+              implemented: false,
+            }
+
+            const isBusy = busyKey === m.module_key
+            const locked = Boolean(meta.locked)
+            const implemented = Boolean(meta.implemented)
+
+            const disableToggle = locked || isBusy || !implemented
+
+            return (
+              <div key={m.module_key} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
+                      <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
+                      <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
+                        {m.module_key}
+                      </span>
+                      {locked ? (
+                        <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
+                          obrigatório
+                        </span>
+                      ) : null}
+                      {!implemented ? (
+                        <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
+                          em breve
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <p className="mt-2 text-sm text-slate-400">{meta.desc}</p>
+
+                    <p className="mt-2 text-xs text-slate-500 font-mono">
+                      Atualizado: {formatDt(m.updated_at)}
+                    </p>
+
+                    {isBusy ? <p className="mt-2 text-xs text-slate-500">a atualizar…</p> : null}
+                  </div>
+
+                  <button
+                    onClick={() => toggle(m.module_key, !m.enabled)}
+                    disabled={disableToggle}
+                    className={classNames(
+                      "relative inline-flex h-6 w-11 items-center rounded-full border transition shrink-0",
+                      disableToggle ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+                      m.enabled ? "bg-emerald-500/20 border-emerald-700" : "bg-slate-900 border-slate-700"
+                    )}
+                    aria-label={`Toggle ${m.module_key}`}
+                    title={locked ? "Obrigatório" : !implemented ? "Em breve" : "Ativar/desativar"}
+                  >
+                    <span
+                      className={classNames(
+                        "inline-block h-5 w-5 transform rounded-full bg-slate-100 transition",
+                        m.enabled ? "translate-x-5" : "translate-x-1"
+                      )}
+                    />
+                  </button>
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+
+      {/* DESKTOP: tabela */}
+      <div className="mt-6 hidden md:block overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
         <div className="grid grid-cols-12 gap-0 border-b border-slate-800 bg-slate-950/60 px-4 py-3 text-xs text-slate-400">
           <div className="col-span-5">Módulo</div>
           <div className="col-span-4">Descrição</div>
@@ -279,9 +358,7 @@ export default function ModulosPage() {
                         </span>
                       ) : null}
 
-                      {isBusy ? (
-                        <span className="text-[11px] text-slate-400">a atualizar…</span>
-                      ) : null}
+                      {isBusy ? <span className="text-[11px] text-slate-400">a atualizar…</span> : null}
                     </div>
                   </div>
 
@@ -301,13 +378,7 @@ export default function ModulosPage() {
                         m.enabled ? "bg-emerald-500/20 border-emerald-700" : "bg-slate-900 border-slate-700"
                       )}
                       aria-label={`Toggle ${m.module_key}`}
-                      title={
-                        locked
-                          ? "Obrigatório"
-                          : !implemented
-                          ? "Em breve"
-                          : "Ativar/desativar"
-                      }
+                      title={locked ? "Obrigatório" : !implemented ? "Em breve" : "Ativar/desativar"}
                     >
                       <span
                         className={classNames(
@@ -328,8 +399,12 @@ export default function ModulosPage() {
         <h2 className="text-sm font-semibold text-slate-100">Notas</h2>
         <ul className="mt-2 list-disc pl-5 text-sm text-slate-400 space-y-1">
           <li>Core e Docs podem estar ativos por padrão (seed). O Core é bloqueado.</li>
-          <li>Módulos marcados como <span className="font-mono text-slate-300">em breve</span> ainda não estão implementados na app.</li>
-          <li>O menu do /adm mostra apenas módulos <span className="font-mono text-slate-300">enabled</span> e <span className="font-mono text-slate-300">implemented</span>.</li>
+          <li>
+            Módulos marcados como <span className="font-mono text-slate-300">em breve</span> ainda não estão implementados na app.
+          </li>
+          <li>
+            O menu do /adm mostra apenas módulos <span className="font-mono text-slate-300">enabled</span> e <span className="font-mono text-slate-300">implemented</span>.
+          </li>
         </ul>
       </div>
     </div>
