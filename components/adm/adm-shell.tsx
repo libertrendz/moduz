@@ -3,13 +3,14 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu dinâmico (v3)
+ * Etapa: Layout + Menu Dinâmico (v4)
  * Descrição:
- *  - Carrega contexto (empresas) e define empresa ativa automaticamente
- *  - Carrega módulos enabled da empresa
- *  - Menu curto e dinâmico (somente enabled + implemented)
- *  - Wordmark aplicado (public/brand)
- *  - UI limpa: remove empresa_id visível (era debug)
+ *  - Contexto SSR por cookies (empresas acessíveis)
+ *  - Empresa ativa via localStorage (moduz_empresa_id)
+ *  - Menu dinâmico:
+ *      - Core sempre
+ *      - demais: somente se (enabled no DB) E (implemented no código)
+ *  - Evita rotas quebradas e mantém UX coerente por empresa
  * =============================================
  */
 
@@ -52,12 +53,17 @@ type ModuleRow = {
   enabled_at: string | null
   updated_at: string | null
 }
+
 type ModulesListResponse =
   | { empresa_id: string; modules: ModuleRow[] }
   | { error: string; details?: string | null }
 
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ")
+}
+
+function safeJson<T>(x: any): T | null {
+  return x && typeof x === "object" ? (x as T) : null
 }
 
 export function AdmShell(props: { children: React.ReactNode }) {
@@ -69,8 +75,8 @@ export function AdmShell(props: { children: React.ReactNode }) {
   const [empresas, setEmpresas] = React.useState<EmpresaItem[]>([])
   const [empresaId, setEmpresaId] = React.useState<string | null>(null)
 
-  const [modulesEnabled, setModulesEnabled] = React.useState<string[]>([])
   const [modulesLoading, setModulesLoading] = React.useState(false)
+  const [enabledKeys, setEnabledKeys] = React.useState<string[]>(["core"])
 
   const [logoOk, setLogoOk] = React.useState(true)
 
@@ -79,12 +85,10 @@ export function AdmShell(props: { children: React.ReactNode }) {
     setErr(null)
 
     try {
-      const r = await fetch("/api/admin/core/context", {
-        credentials: "include",
-      })
-      const j = (await r.json().catch(() => null)) as CoreContextResponse | null
+      const r = await fetch("/api/admin/core/context", { credentials: "include" })
+      const j = safeJson<CoreContextResponse>(await r.json().catch(() => null))
 
-      if (!r.ok || !j || j.ok === false) {
+      if (!r.ok || !j || (j as any).ok === false) {
         setErr((j as any)?.error ?? "Falha ao carregar contexto.")
         setEmpresas([])
         setEmpresaId(null)
@@ -103,9 +107,10 @@ export function AdmShell(props: { children: React.ReactNode }) {
       setEmpresas(empresasNormalized)
 
       const stored = getEmpresaIdFromStorage()
-      const allowed = empresasNormalized?.some((e) => e.empresa_id === stored)
+      const allowed = Boolean(stored && empresasNormalized.some((e) => e.empresa_id === stored))
+
       const nextEmpresa =
-        (stored && allowed ? stored : null) ??
+        (allowed ? stored : null) ??
         data.default_empresa_id ??
         empresasNormalized?.[0]?.empresa_id ??
         null
@@ -125,7 +130,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
     }
   }
 
-  async function loadModules(eid: string) {
+  async function loadEnabledModules(eid: string) {
     setModulesLoading(true)
     try {
       const r = await fetch("/api/admin/core/modules/list", {
@@ -134,22 +139,22 @@ export function AdmShell(props: { children: React.ReactNode }) {
         credentials: "include",
       })
 
-      const j = (await r.json().catch(() => null)) as ModulesListResponse | null
+      const j = safeJson<ModulesListResponse>(await r.json().catch(() => null))
 
-      if (!r.ok || !j) {
-        setModulesEnabled([])
+      if (!r.ok || !j || "error" in j) {
+        // fallback seguro: só Core
+        setEnabledKeys(["core"])
         return
       }
 
-      if ("modules" in j && Array.isArray(j.modules)) {
-        const enabled = j.modules.filter((m) => m.enabled).map((m) => m.module_key)
-        if (!enabled.includes("core")) enabled.unshift("core")
-        setModulesEnabled(enabled)
-      } else {
-        setModulesEnabled([])
-      }
+      const enabled =
+        (j.modules ?? []).filter((m) => m.enabled).map((m) => m.module_key) ?? []
+
+      // Core sempre presente
+      const uniq = Array.from(new Set(["core", ...enabled]))
+      setEnabledKeys(uniq)
     } catch {
-      setModulesEnabled([])
+      setEnabledKeys(["core"])
     } finally {
       setModulesLoading(false)
     }
@@ -162,7 +167,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     if (!empresaId) return
-    loadModules(empresaId)
+    loadEnabledModules(empresaId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresaId])
 
@@ -171,22 +176,36 @@ export function AdmShell(props: { children: React.ReactNode }) {
     setEmpresaIdToStorage(next)
   }
 
-  const visibleMenu = React.useMemo(() => {
-    const enabled = modulesEnabled.length ? modulesEnabled : ["core"]
-
-    const keys = enabled.filter((k) => {
+  // ✅ MENU DINÂMICO (aqui está a regra)
+  const menuItems = React.useMemo(() => {
+    const keys = enabledKeys.filter((k) => {
       if (k === "core") return true
       const meta = MODULES[k]
       return Boolean(meta?.implemented)
     })
 
     const items = keys.map((k) => ROUTES_BY_MODULE[k]).filter(Boolean)
-    items.sort((a, b) =>
-      a.label === "Core" ? -1 : b.label === "Core" ? 1 : a.label.localeCompare(b.label)
-    )
+
+    // Ordem premium: Core primeiro, resto por ordem do registry (se existir)
+    items.sort((a, b) => {
+      if (a.key === "core") return -1
+      if (b.key === "core") return 1
+      const ao = MODULES[a.key]?.order ?? 999
+      const bo = MODULES[b.key]?.order ?? 999
+      if (ao !== bo) return ao - bo
+      return a.label.localeCompare(b.label)
+    })
 
     return items
-  }, [modulesEnabled])
+  }, [enabledKeys])
+
+  const headerSubtitle = React.useMemo(() => {
+    if (!empresaId) return "Sem empresa ativa"
+    const current = empresas.find((e) => e.empresa_id === empresaId)
+    const nome = (current as any)?.nome ?? (current as any)?.empresa_nome ?? null
+    const role = (current as any)?.role ?? null
+    return `${nome ?? "Empresa"}${role ? ` • ${role}` : ""}`
+  }, [empresaId, empresas])
 
   return (
     <div className="min-h-screen bg-black text-slate-100">
@@ -205,7 +224,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 <span className="text-base font-semibold tracking-wide">Moduz+</span>
               )}
             </a>
-            <span className="hidden md:inline text-xs text-slate-500">ERP modular</span>
+            <span className="hidden md:inline text-xs text-slate-500">{headerSubtitle}</span>
           </div>
 
           <div className="flex items-center gap-3">
@@ -234,9 +253,9 @@ export function AdmShell(props: { children: React.ReactNode }) {
         <div className="mx-auto max-w-6xl px-4 pb-4">
           <nav className="flex flex-wrap items-center gap-2">
             {modulesLoading ? (
-              <span className="text-xs text-slate-500">A carregar módulos…</span>
+              <span className="text-xs text-slate-500">A carregar menu…</span>
             ) : (
-              visibleMenu.map((it) => (
+              menuItems.map((it) => (
                 <a
                   key={it.href}
                   href={it.href}
@@ -244,14 +263,13 @@ export function AdmShell(props: { children: React.ReactNode }) {
                     "rounded-md border px-3 py-1.5 text-sm",
                     "border-slate-900 bg-slate-950 text-slate-200 hover:bg-slate-900"
                   )}
+                  title={it.label}
                 >
                   {it.label}
                 </a>
               ))
             )}
           </nav>
-
-          {/* REMOVIDO: empresa_id visível aqui (era debug) */}
         </div>
       </header>
 
