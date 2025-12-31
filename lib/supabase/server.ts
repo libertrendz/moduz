@@ -1,26 +1,47 @@
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+/**
+ * =============================================
+ * Moduz+ | Supabase Server (SSR Cookies)
+ * Arquivo: lib/supabase/server.ts
+ * Módulo: Core (Auth)
+ * Etapa: SSR session via cookies (v1)
+ * Descrição:
+ *  - Cria cliente Supabase server-side com persistência via cookies (Next App Router)
+ *  - Evita loops mobile (client session vs cookie session)
+ * =============================================
+ */
 
-function env(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
+import { createServerClient } from "@supabase/ssr"
+import { cookies } from "next/headers"
+
+function requiredEnv(name: string) {
+  const v = process.env[name]
+  if (!v) throw new Error(`Missing env: ${name}`)
+  return v
 }
 
-export function createSupabaseServerClient() {
-  const cookieStore = cookies();
+export function supabaseServer() {
+  const cookieStore = cookies()
 
-  return createServerClient(env("NEXT_PUBLIC_SUPABASE_URL"), env("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
+  const url = requiredEnv("NEXT_PUBLIC_SUPABASE_URL")
+  const anon = requiredEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+
+  return createServerClient(url, anon, {
     cookies: {
-      get(name: string) {
-        return cookieStore.get(name)?.value;
+      getAll() {
+        return cookieStore.getAll().map((c) => ({
+          name: c.name,
+          value: c.value,
+        }))
       },
-      set(name: string, value: string, options: any) {
-        cookieStore.set({ name, value, ...options });
-      },
-      remove(name: string, options: any) {
-        cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+      setAll(cookiesToSet) {
+        for (const c of cookiesToSet) {
+          cookieStore.set({
+            name: c.name,
+            value: c.value,
+            ...c.options,
+          })
+        }
       },
     },
-  });
+  })
 }
