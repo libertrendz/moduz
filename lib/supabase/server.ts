@@ -3,9 +3,10 @@
  * Moduz+ | Supabase Server (SSR Cookies)
  * Arquivo: lib/supabase/server.ts
  * Módulo: Core (Auth)
- * Etapa: SSR session via cookies (v1)
+ * Etapa: SSR session via cookies (v2 - compat)
  * Descrição:
- *  - Cria cliente Supabase server-side com persistência via cookies (Next App Router)
+ *  - Cliente Supabase server-side com persistência via cookies (Next App Router)
+ *  - Compatível com imports existentes: createSupabaseServerClient()
  *  - Evita loops mobile (client session vs cookie session)
  * =============================================
  */
@@ -19,7 +20,11 @@ function requiredEnv(name: string) {
   return v
 }
 
-export function supabaseServer() {
+/**
+ * Nome "canônico" compatível com o código existente no repo.
+ * Use este nas rotas server-side.
+ */
+export function createSupabaseServerClient() {
   const cookieStore = cookies()
 
   const url = requiredEnv("NEXT_PUBLIC_SUPABASE_URL")
@@ -28,10 +33,7 @@ export function supabaseServer() {
   return createServerClient(url, anon, {
     cookies: {
       getAll() {
-        return cookieStore.getAll().map((c) => ({
-          name: c.name,
-          value: c.value,
-        }))
+        return cookieStore.getAll().map((c) => ({ name: c.name, value: c.value }))
       },
       setAll(cookiesToSet) {
         for (const c of cookiesToSet) {
@@ -44,4 +46,12 @@ export function supabaseServer() {
       },
     },
   })
+}
+
+/**
+ * Alias opcional (para legibilidade).
+ * Mantém o contrato de compatibilidade com createSupabaseServerClient.
+ */
+export function supabaseServer() {
+  return createSupabaseServerClient()
 }
