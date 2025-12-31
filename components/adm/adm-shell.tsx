@@ -3,12 +3,13 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu dinâmico (v2)
+ * Etapa: Layout + Menu dinâmico (v3)
  * Descrição:
  *  - Carrega contexto (empresas) e define empresa ativa automaticamente
  *  - Carrega módulos enabled da empresa
  *  - Menu curto e dinâmico (somente enabled + implemented)
  *  - Wordmark aplicado (public/brand)
+ *  - UI limpa: remove empresa_id visível (era debug)
  * =============================================
  */
 
@@ -26,8 +27,21 @@ import { MODULES, ROUTES_BY_MODULE } from "./module-registry"
 type CoreContextResponse =
   | {
       ok: true
-      user_id: string
-      empresas: EmpresaItem[]
+      user: { id: string; email: string | null }
+      profile:
+        | {
+            profile_id: string | null
+            display_name: string | null
+            role: string | null
+            empresa_id: string | null
+          }
+        | null
+      empresas: Array<{
+        empresa_id: string
+        nome: string | null
+        role: string | null
+        ativo: boolean
+      }>
       default_empresa_id: string | null
     }
   | { ok: false; error: string; details?: string | null }
@@ -78,14 +92,22 @@ export function AdmShell(props: { children: React.ReactNode }) {
       }
 
       const data = j as Extract<CoreContextResponse, { ok: true }>
-      setEmpresas(Array.isArray(data.empresas) ? data.empresas : [])
+
+      const empresasNormalized: EmpresaItem[] = (data.empresas ?? []).map((e) => ({
+        empresa_id: e.empresa_id,
+        ativo: e.ativo !== false,
+        role: e.role ?? "",
+        nome: e.nome ?? null,
+      }))
+
+      setEmpresas(empresasNormalized)
 
       const stored = getEmpresaIdFromStorage()
-      const allowed = data.empresas?.some((e) => e.empresa_id === stored)
+      const allowed = empresasNormalized?.some((e) => e.empresa_id === stored)
       const nextEmpresa =
         (stored && allowed ? stored : null) ??
         data.default_empresa_id ??
-        data.empresas?.[0]?.empresa_id ??
+        empresasNormalized?.[0]?.empresa_id ??
         null
 
       if (nextEmpresa) {
@@ -150,10 +172,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
   }
 
   const visibleMenu = React.useMemo(() => {
-    // Regra Moduz:
-    // - só mostrar módulos habilitados (enabled)
-    // - e que existam no código (implemented=true)
-    // - Core sempre aparece
     const enabled = modulesEnabled.length ? modulesEnabled : ["core"]
 
     const keys = enabled.filter((k) => {
@@ -173,7 +191,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-black text-slate-100">
       <header className="sticky top-0 z-20 border-b border-slate-900 bg-black/70 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
           <div className="flex items-center gap-3">
             <a href="/adm" className="flex items-center gap-3">
               {logoOk ? (
@@ -183,7 +201,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
                   className="h-12 w-auto md:h-14 shrink-0"
                   onError={() => setLogoOk(false)}
                 />
-
               ) : (
                 <span className="text-base font-semibold tracking-wide">Moduz+</span>
               )}
@@ -214,7 +231,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <div className="mx-auto max-w-6xl px-4 pb-3">
+        <div className="mx-auto max-w-6xl px-4 pb-4">
           <nav className="flex flex-wrap items-center gap-2">
             {modulesLoading ? (
               <span className="text-xs text-slate-500">A carregar módulos…</span>
@@ -234,11 +251,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
             )}
           </nav>
 
-          {empresaId ? (
-            <div className="mt-2 text-[11px] text-slate-500">
-              empresa_id: <span className="font-mono text-slate-300">{empresaId}</span>
-            </div>
-          ) : null}
+          {/* REMOVIDO: empresa_id visível aqui (era debug) */}
         </div>
       </header>
 
