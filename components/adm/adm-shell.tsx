@@ -3,14 +3,15 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu Dinâmico (v4.1)
+ * Etapa: Layout + Menu Dinâmico (v4.2)
  * Descrição:
  *  - Contexto SSR por cookies (empresas acessíveis)
  *  - Empresa ativa via localStorage (moduz_empresa_id)
  *  - Menu dinâmico:
  *      - Core sempre
  *      - demais: somente se (enabled no DB) E (implemented no código)
- *  - Ordenação por MODULES[module_key].order (fallback alfabético)
+ *  - Ordenação: Core primeiro, depois por label (alfabético)
+ *  - Não depende de "order" no ModuleMeta (evita quebra de tipo)
  * =============================================
  */
 
@@ -176,8 +177,9 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
   /**
    * ✅ MENU DINÂMICO
-   * Trabalha com module_key (string) e só no fim mapeia para href/label.
-   * Assim não dependemos de ROUTES_BY_MODULE ter "key".
+   * - Trabalha com module_key
+   * - Filtra por implemented (código) + enabled (DB)
+   * - Ordena: Core primeiro, depois por label
    */
   const menuItems = React.useMemo(() => {
     const allowedKeys = enabledKeys.filter((k) => {
@@ -186,13 +188,9 @@ export function AdmShell(props: { children: React.ReactNode }) {
       return Boolean(meta?.implemented)
     })
 
-    // ordenação: core primeiro, depois order, depois label
     const sortedKeys = [...allowedKeys].sort((a, b) => {
       if (a === "core") return -1
       if (b === "core") return 1
-      const ao = MODULES[a]?.order ?? 999
-      const bo = MODULES[b]?.order ?? 999
-      if (ao !== bo) return ao - bo
       const al = ROUTES_BY_MODULE[a]?.label ?? a
       const bl = ROUTES_BY_MODULE[b]?.label ?? b
       return String(al).localeCompare(String(bl))
@@ -267,7 +265,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
                     "rounded-md border px-3 py-1.5 text-sm",
                     "border-slate-900 bg-slate-950 text-slate-200 hover:bg-slate-900"
                   )}
-                  title={it.label}
                 >
                   {it.label}
                 </a>
