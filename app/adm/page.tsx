@@ -3,73 +3,116 @@
  * Moduz+ | Admin Home
  * Arquivo: app/adm/page.tsx
  * Módulo: Core
- * Etapa: Guard mínimo + contexto
- * Descrição: Exige sessão. Busca /api/admin/me e mostra contexto.
+ * Etapa: Guard SSR + contexto (v2)
+ * Descrição:
+ *  - Exige sessão SSR (cookies) e evita loop no mobile
+ *  - Busca contexto via /api/admin/core/context (credentials: include)
+ *  - Logout via /api/auth/sign-out (server) para limpar cookies SSR
  * =============================================
  */
 
 "use client"
 
 import { useEffect, useState } from "react"
-import { supabaseBrowser } from "../lib/supabase-browser"
 
-type MeResponse = {
-  ok: boolean
-  user?: { id: string; email?: string }
-  empresas?: Array<{ id: string; nome: string; slug?: string | null }>
-  active_empresa_id?: string | null
-  profile?: { role: string; display_name?: string | null } | null
-  modules_enabled?: string[]
-  settings?: any
-  error?: string
+type EmpresaItem = {
+  empresa_id: string
+  nome: string
+  role?: string | null
 }
+
+type CoreContextOk = {
+  ok: true
+  user_id: string
+  email?: string | null
+  profile?: {
+    profile_id?: string | null
+    display_name?: string | null
+    role?: string | null
+    empresa_id?: string | null
+  } | null
+  empresas: EmpresaItem[]
+  default_empresa_id: string | null
+}
+
+type CoreContextErr = { ok: false; error: string; details?: string | null }
+
+type CoreContextResponse = CoreContextOk | CoreContextErr
 
 export default function AdmHomePage() {
   const [loading, setLoading] = useState(true)
-  const [data, setData] = useState<MeResponse | null>(null)
+  const [data, setData] = useState<CoreContextOk | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelled = false
+
     ;(async () => {
       setErr(null)
       setLoading(true)
 
       try {
-        const supabase = supabaseBrowser()
-        const { data: sess } = await supabase.auth.getSession()
+        // Guard SSR: se não houver cookies válidos, o server responde 401
+        const res = await fetch("/api/admin/core/context", {
+          method: "GET",
+          credentials: "include",
+        })
 
-        if (!sess.session) {
+        if (res.status === 401 || res.status === 403) {
+          // Sem sessão SSR → vai para login (sem loop)
           window.location.replace("/login")
           return
         }
 
-        const token = sess.session.access_token
+        const json = (await res.json().catch(() => null)) as CoreContextResponse | null
 
-        const res = await fetch("/api/admin/me", {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        const json = (await res.json().catch(() => ({}))) as MeResponse
-
-        if (!res.ok || !json?.ok) {
-          setErr(json?.error || "Falha ao carregar contexto do Core.")
-          setData(json)
+        if (!res.ok || !json || json.ok === false) {
+          const msg =
+            (json as any)?.error ||
+            "Falha ao carregar contexto do Core (SSR)."
+          if (!cancelled) {
+            setErr(msg)
+            setData(null)
+          }
           return
         }
 
-        setData(json)
+        if (!cancelled) {
+          setData(json as CoreContextOk)
+        }
       } catch (e: any) {
-        setErr(e?.message || "Erro inesperado.")
+        if (!cancelled) setErr(e?.message || "Erro inesperado.")
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     })()
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const onLogout = async () => {
-    const supabase = supabaseBrowser()
-    await supabase.auth.signOut()
-    window.location.replace("/login")
+    try {
+      await fetch("/api/auth/sign-out", {
+        method: "POST",
+        credentials: "include",
+      })
+    } catch {
+      // mesmo se falhar, forçamos saída
+    } finally {
+      window.location.replace("/login")
+    }
   }
+
+  const activeEmpresaId =
+    (typeof window !== "undefined" && window.localStorage?.getItem("moduz_empresa_id")) ||
+    data?.default_empresa_id ||
+    data?.empresas?.[0]?.empresa_id ||
+    null
+
+  const activeEmpresaName =
+    data?.empresas?.find((e) => e.empresa_id === activeEmpresaId)?.nome ?? "—"
 
   return (
     <main className="min-h-screen p-6">
@@ -79,7 +122,8 @@ export default function AdmHomePage() {
             <div>
               <h1 className="text-xl font-semibold text-slate-50">Admin • Moduz+</h1>
               <p className="mt-2 text-sm text-slate-400">
-                Core runtime (contexto via <code className="text-slate-200">/api/admin/me</code>).
+                Core runtime (contexto via{" "}
+                <code className="text-slate-200">/api/admin/core/context</code>).
               </p>
             </div>
 
@@ -104,7 +148,7 @@ export default function AdmHomePage() {
               <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
                 <h2 className="text-sm font-medium text-slate-200">Utilizador</h2>
                 <p className="mt-2 text-sm text-slate-400">
-                  {data?.user?.email ?? data?.user?.id}
+                  {data?.email ?? data?.user_id ?? "—"}
                 </p>
                 <p className="mt-1 text-sm text-slate-500">
                   {data?.profile?.display_name ?? "—"} • {data?.profile?.role ?? "—"}
@@ -113,19 +157,16 @@ export default function AdmHomePage() {
 
               <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
                 <h2 className="text-sm font-medium text-slate-200">Empresa ativa</h2>
-                <p className="mt-2 text-sm text-slate-400">
-                  {data?.empresas?.find((e) => e.id === data?.active_empresa_id)?.nome ??
-                    "—"}
-                </p>
+                <p className="mt-2 text-sm text-slate-400">{activeEmpresaName}</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {data?.active_empresa_id ?? "sem empresa ativa"}
+                  {activeEmpresaId ?? "sem empresa ativa"}
                 </p>
               </div>
 
               <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 md:col-span-2">
-                <h2 className="text-sm font-medium text-slate-200">Módulos ativos</h2>
+                <h2 className="text-sm font-medium text-slate-200">Empresas</h2>
                 <p className="mt-2 text-sm text-slate-400">
-                  {(data?.modules_enabled ?? []).join(", ") || "—"}
+                  {(data?.empresas ?? []).map((e) => e.nome).join(", ") || "—"}
                 </p>
               </div>
             </div>
