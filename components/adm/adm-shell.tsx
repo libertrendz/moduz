@@ -3,14 +3,14 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu Dinâmico (v4)
+ * Etapa: Layout + Menu Dinâmico (v4.1)
  * Descrição:
  *  - Contexto SSR por cookies (empresas acessíveis)
  *  - Empresa ativa via localStorage (moduz_empresa_id)
  *  - Menu dinâmico:
  *      - Core sempre
  *      - demais: somente se (enabled no DB) E (implemented no código)
- *  - Evita rotas quebradas e mantém UX coerente por empresa
+ *  - Ordenação por MODULES[module_key].order (fallback alfabético)
  * =============================================
  */
 
@@ -142,7 +142,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
       const j = safeJson<ModulesListResponse>(await r.json().catch(() => null))
 
       if (!r.ok || !j || "error" in j) {
-        // fallback seguro: só Core
         setEnabledKeys(["core"])
         return
       }
@@ -150,7 +149,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
       const enabled =
         (j.modules ?? []).filter((m) => m.enabled).map((m) => m.module_key) ?? []
 
-      // Core sempre presente
       const uniq = Array.from(new Set(["core", ...enabled]))
       setEnabledKeys(uniq)
     } catch {
@@ -176,27 +174,33 @@ export function AdmShell(props: { children: React.ReactNode }) {
     setEmpresaIdToStorage(next)
   }
 
-  // ✅ MENU DINÂMICO (aqui está a regra)
+  /**
+   * ✅ MENU DINÂMICO
+   * Trabalha com module_key (string) e só no fim mapeia para href/label.
+   * Assim não dependemos de ROUTES_BY_MODULE ter "key".
+   */
   const menuItems = React.useMemo(() => {
-    const keys = enabledKeys.filter((k) => {
+    const allowedKeys = enabledKeys.filter((k) => {
       if (k === "core") return true
       const meta = MODULES[k]
       return Boolean(meta?.implemented)
     })
 
-    const items = keys.map((k) => ROUTES_BY_MODULE[k]).filter(Boolean)
-
-    // Ordem premium: Core primeiro, resto por ordem do registry (se existir)
-    items.sort((a, b) => {
-      if (a.key === "core") return -1
-      if (b.key === "core") return 1
-      const ao = MODULES[a.key]?.order ?? 999
-      const bo = MODULES[b.key]?.order ?? 999
+    // ordenação: core primeiro, depois order, depois label
+    const sortedKeys = [...allowedKeys].sort((a, b) => {
+      if (a === "core") return -1
+      if (b === "core") return 1
+      const ao = MODULES[a]?.order ?? 999
+      const bo = MODULES[b]?.order ?? 999
       if (ao !== bo) return ao - bo
-      return a.label.localeCompare(b.label)
+      const al = ROUTES_BY_MODULE[a]?.label ?? a
+      const bl = ROUTES_BY_MODULE[b]?.label ?? b
+      return String(al).localeCompare(String(bl))
     })
 
-    return items
+    return sortedKeys
+      .map((k) => ROUTES_BY_MODULE[k])
+      .filter(Boolean) as Array<{ href: string; label: string }>
   }, [enabledKeys])
 
   const headerSubtitle = React.useMemo(() => {
