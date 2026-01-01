@@ -9,6 +9,7 @@
  *  - Toggle com feedback, loading e tratamento de erro
  *  - Regra Moduz: não permite ativar módulos não implementados (badge "Em breve")
  *  - Responsivo: cards no mobile, tabela no desktop (evita sobreposição)
+ *  - Sem bloco “Notas” (regras ficam no texto + toasts/tooltips)
  * =============================================
  */
 
@@ -123,7 +124,7 @@ export default function ModulosPage() {
     const implemented = Boolean(meta?.implemented)
 
     if (locked) {
-      setToast({ kind: "err", msg: "O módulo Core não pode ser desativado." })
+      setToast({ kind: "err", msg: "O módulo Core é obrigatório e não pode ser desativado." })
       return
     }
 
@@ -155,7 +156,7 @@ export default function ModulosPage() {
 
       if ("ok" in j && j.ok === true) {
         setRows((prev) => prev.map((x) => (x.module_key === module_key ? j.module : x)))
-        setToast({ kind: "ok", msg: `Módulo atualizado.` })
+        setToast({ kind: "ok", msg: "Módulo atualizado." })
         return
       }
 
@@ -401,18 +402,7 @@ export default function ModulosPage() {
           </ul>
         )}
       </div>
-
-      <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950 p-4">
-        <h2 className="text-sm font-semibold text-slate-100">Notas</h2>
-        <ul className="mt-2 list-disc pl-5 text-sm text-slate-400 space-y-1">
-          <li>Core e Docs podem estar ativos por padrão (seed). O Core é bloqueado.</li>
-          <li>
-            Módulos marcados como <span className="font-mono text-slate-300">em breve</span> ainda
-            não estão disponíveis.
-          </li>
-          <li>O Admin só mostra no menu os módulos que estão ativos e disponíveis.</li>
-        </ul>
-      </div>
     </div>
   )
 }
+```0
