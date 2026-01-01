@@ -9,7 +9,7 @@
  *  - Toggle com feedback, loading e tratamento de erro
  *  - Regra Moduz: não permite ativar módulos não implementados (badge "Em breve")
  *  - Responsivo: cards no mobile, tabela no desktop (evita sobreposição)
- *  - Sem bloco “Notas” (regras ficam no texto + toasts/tooltips)
+ *  - Sem “Notas” (regras ficam no texto + toasts/tooltips)
  * =============================================
  */
 
@@ -220,7 +220,7 @@ export default function ModulosPage() {
         </div>
       ) : null}
 
-      {/* MOBILE: cards (evita sobreposição) */}
+      {/* MOBILE: cards */}
       <div className="mt-6 space-y-3 md:hidden">
         {loading ? (
           <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-400">
@@ -232,16 +232,10 @@ export default function ModulosPage() {
           </div>
         ) : (
           sortedRows.map((m) => {
-            const meta = MODULES[m.module_key] ?? {
-              title: m.module_key,
-              desc: "—",
-              implemented: false,
-            }
-
+            const meta = MODULES[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
             const isBusy = busyKey === m.module_key
             const locked = Boolean(meta.locked)
             const implemented = Boolean(meta.implemented)
-
             const disableToggle = locked || isBusy || !implemented
 
             return (
@@ -249,12 +243,7 @@ export default function ModulosPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <div
-                        className={classNames(
-                          "h-2.5 w-2.5 rounded-full",
-                          m.enabled ? "bg-emerald-400" : "bg-slate-600"
-                        )}
-                      />
+                      <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
                       <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
                       <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
@@ -272,11 +261,7 @@ export default function ModulosPage() {
                     </div>
 
                     <p className="mt-2 text-sm text-slate-400">{meta.desc}</p>
-
-                    <p className="mt-2 text-xs text-slate-500 font-mono">
-                      Atualizado: {formatDt(m.updated_at)}
-                    </p>
-
+                    <p className="mt-2 text-xs text-slate-500 font-mono">Atualizado: {formatDt(m.updated_at)}</p>
                     {isBusy ? <p className="mt-2 text-xs text-slate-500">a atualizar…</p> : null}
                   </div>
 
@@ -321,60 +306,37 @@ export default function ModulosPage() {
         ) : (
           <ul>
             {sortedRows.map((m) => {
-              const meta = MODULES[m.module_key] ?? {
-                title: m.module_key,
-                desc: "—",
-                implemented: false,
-              }
-
+              const meta = MODULES[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
               const isBusy = busyKey === m.module_key
               const locked = Boolean(meta.locked)
               const implemented = Boolean(meta.implemented)
-
               const disableToggle = locked || isBusy || !implemented
 
               return (
-                <li
-                  key={m.module_key}
-                  className="grid grid-cols-12 gap-0 px-4 py-4 border-b border-slate-900 last:border-b-0"
-                >
+                <li key={m.module_key} className="grid grid-cols-12 gap-0 px-4 py-4 border-b border-slate-900 last:border-b-0">
                   <div className="col-span-5">
                     <div className="flex items-center gap-2">
-                      <div
-                        className={classNames(
-                          "h-2.5 w-2.5 rounded-full",
-                          m.enabled ? "bg-emerald-400" : "bg-slate-600"
-                        )}
-                      />
+                      <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
                       <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
-
                       <span className="ml-2 rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
                       </span>
-
                       {locked ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           obrigatório
                         </span>
                       ) : null}
-
                       {!implemented ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           em breve
                         </span>
                       ) : null}
-
-                      {isBusy ? (
-                        <span className="text-[11px] text-slate-400">a atualizar…</span>
-                      ) : null}
+                      {isBusy ? <span className="text-[11px] text-slate-400">a atualizar…</span> : null}
                     </div>
                   </div>
 
                   <div className="col-span-4 text-sm text-slate-400">{meta.desc}</div>
-
-                  <div className="col-span-2 text-xs text-slate-400 font-mono">
-                    {formatDt(m.updated_at)}
-                  </div>
+                  <div className="col-span-2 text-xs text-slate-400 font-mono">{formatDt(m.updated_at)}</div>
 
                   <div className="col-span-1 flex justify-end">
                     <button
@@ -405,4 +367,3 @@ export default function ModulosPage() {
     </div>
   )
 }
-```0
