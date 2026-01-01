@@ -73,13 +73,14 @@ export default function ModulosPage() {
   async function load() {
     setLoading(true)
     setErr(null)
+
     try {
       const eid = getEmpresaId()
       setEmpresaId(eid)
 
       if (!eid) {
         setRows([])
-        setErr("EMPRESA_ID_AUSENTE: contexto não definiu empresa ativa.")
+        setErr("Selecione uma empresa no topo do Admin para gerir os módulos.")
         return
       }
 
@@ -94,8 +95,8 @@ export default function ModulosPage() {
       if (!r.ok) {
         const msg =
           (j as any)?.error
-            ? `${(j as any).error}${(j as any).details ? `: ${(j as any).details}` : ""}`
-            : "Falha ao carregar."
+            ? `Não foi possível carregar os módulos.${(j as any).details ? ` (${(j as any).details})` : ""}`
+            : "Não foi possível carregar os módulos."
         setErr(msg)
         setRows([])
         return
@@ -113,7 +114,7 @@ export default function ModulosPage() {
 
   async function toggle(module_key: string, enabled: boolean) {
     if (!empresaId) {
-      setToast({ kind: "err", msg: "Empresa não definida." })
+      setToast({ kind: "err", msg: "Selecione uma empresa para continuar." })
       return
     }
 
@@ -127,7 +128,7 @@ export default function ModulosPage() {
     }
 
     if (!implemented) {
-      setToast({ kind: "err", msg: "Módulo ainda não disponível (Em breve)." })
+      setToast({ kind: "err", msg: "Este módulo ainda não está disponível (Em breve)." })
       return
     }
 
@@ -154,14 +155,16 @@ export default function ModulosPage() {
 
       if ("ok" in j && j.ok === true) {
         setRows((prev) => prev.map((x) => (x.module_key === module_key ? j.module : x)))
-        setToast({ kind: "ok", msg: `Módulo "${module_key}" atualizado.` })
+        setToast({ kind: "ok", msg: `Módulo atualizado.` })
         return
       }
 
       throw new Error((j as any)?.error || "Falha ao atualizar módulo.")
     } catch (e: any) {
       // rollback
-      setRows((prev) => prev.map((r) => (r.module_key === module_key ? { ...r, enabled: !enabled } : r)))
+      setRows((prev) =>
+        prev.map((r) => (r.module_key === module_key ? { ...r, enabled: !enabled } : r))
+      )
       setToast({ kind: "err", msg: e?.message || "Erro inesperado." })
     } finally {
       setBusyKey(null)
@@ -185,10 +188,7 @@ export default function ModulosPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-50">Gestão de Módulos</h1>
           <p className="mt-2 text-sm text-slate-400">
-            Ative/desative módulos por empresa. Core é obrigatório. Módulos “Em breve” não podem ser ativados.
-          </p>
-          <p className="mt-2 text-xs text-slate-500">
-            Empresa: <span className="font-mono text-slate-300">{empresaId ?? "—"}</span>
+            Ative/desative módulos por empresa. O Core é obrigatório. Módulos “Em breve” não podem ser ativados.
           </p>
         </div>
 
@@ -248,7 +248,12 @@ export default function ModulosPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
+                      <div
+                        className={classNames(
+                          "h-2.5 w-2.5 rounded-full",
+                          m.enabled ? "bg-emerald-400" : "bg-slate-600"
+                        )}
+                      />
                       <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
                       <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
@@ -358,7 +363,9 @@ export default function ModulosPage() {
                         </span>
                       ) : null}
 
-                      {isBusy ? <span className="text-[11px] text-slate-400">a atualizar…</span> : null}
+                      {isBusy ? (
+                        <span className="text-[11px] text-slate-400">a atualizar…</span>
+                      ) : null}
                     </div>
                   </div>
 
@@ -400,11 +407,10 @@ export default function ModulosPage() {
         <ul className="mt-2 list-disc pl-5 text-sm text-slate-400 space-y-1">
           <li>Core e Docs podem estar ativos por padrão (seed). O Core é bloqueado.</li>
           <li>
-            Módulos marcados como <span className="font-mono text-slate-300">em breve</span> ainda não estão implementados na app.
+            Módulos marcados como <span className="font-mono text-slate-300">em breve</span> ainda
+            não estão disponíveis.
           </li>
-          <li>
-            O menu do /adm mostra apenas módulos <span className="font-mono text-slate-300">enabled</span> e <span className="font-mono text-slate-300">implemented</span>.
-          </li>
+          <li>O Admin só mostra no menu os módulos que estão ativos e disponíveis.</li>
         </ul>
       </div>
     </div>
