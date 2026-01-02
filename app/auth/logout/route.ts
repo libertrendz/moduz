@@ -3,11 +3,11 @@
  * Moduz+ | Logout Route
  * Arquivo: app/auth/logout/route.ts
  * Módulo: Core (Auth)
- * Etapa: Logout SSR (v1.2)
+ * Etapa: Logout SSR (v1.3)
  * Descrição:
  *  - Encerra sessão Supabase (cookies)
- *  - Suporta GET e POST (evita 405)
- *  - Redireciona para /login
+ *  - Suporta GET e POST
+ *  - Redireciona para /login usando a origin do request (sem localhost)
  * =============================================
  */
 
@@ -39,22 +39,22 @@ function supabaseServer() {
   })
 }
 
-async function handler() {
+async function handler(req: Request) {
   try {
     const supabase = supabaseServer()
     await supabase.auth.signOut()
   } catch {
-    // mesmo se falhar, seguimos com redirect (não travar logout)
+    // Mesmo se falhar, seguimos com redirect (não travar logout)
   }
 
-  const url = new URL("/login", process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000")
-  return NextResponse.redirect(url)
+  const origin = new URL(req.url).origin
+  return NextResponse.redirect(new URL("/login", origin))
 }
 
-export async function GET() {
-  return handler()
+export async function GET(req: Request) {
+  return handler(req)
 }
 
-export async function POST() {
-  return handler()
+export async function POST(req: Request) {
+  return handler(req)
 }
