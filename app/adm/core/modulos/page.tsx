@@ -9,7 +9,9 @@
  *  - Toggle com feedback, loading e tratamento de erro
  *  - Regra Moduz: não permite ativar módulos não implementados (badge "Em breve")
  *  - Responsivo: cards no mobile, tabela no desktop (evita sobreposição)
- *  - Dispara evento global "moduz:modules-changed" para atualizar o header/menu em tempo real
+ *  - Sincroniza menu do header via:
+ *      - cache localStorage por empresa
+ *      - evento window "moduz:modules-updated"
  * =============================================
  */
 
@@ -47,20 +49,35 @@ function getEmpresaId(): string | null {
   }
 }
 
-function notifyModulesChanged(empresaId: string) {
-  try {
-    window.dispatchEvent(new CustomEvent("moduz:modules-changed", { detail: { empresa_id: empresaId } }))
-  } catch {
-    // ignore
-  }
-}
-
 function formatDt(v: string | null) {
   if (!v) return "—"
   try {
     return new Date(v).toLocaleString("pt-PT")
   } catch {
     return v
+  }
+}
+
+const LS_ENABLED_PREFIX = "moduz_enabled_modules::"
+
+function setEnabledModulesCache(empresaId: string, keys: string[]) {
+  try {
+    const uniq = Array.from(new Set(keys.filter(Boolean)))
+    window.localStorage.setItem(`${LS_ENABLED_PREFIX}${empresaId}`, JSON.stringify(uniq))
+  } catch {
+    // ignore
+  }
+}
+
+function emitModulesUpdated(empresaId: string, enabledKeys: string[]) {
+  try {
+    window.dispatchEvent(
+      new CustomEvent("moduz:modules-updated", {
+        detail: { empresa_id: empresaId, enabled_keys: enabledKeys },
+      })
+    )
+  } catch {
+    // ignore
   }
 }
 
@@ -79,10 +96,17 @@ export default function ModulosPage() {
     return MODULE_ORDER.map((k) => map.get(k)).filter(Boolean) as ModuleRow[]
   }, [rows])
 
-  async function load(andNotify = true) {
+  function syncHeaderMenu(nextRows: ModuleRow[]) {
+    if (!empresaId) return
+    const enabled = nextRows.filter((m) => m.enabled).map((m) => m.module_key)
+    const keys = Array.from(new Set(["core", ...enabled]))
+    setEnabledModulesCache(empresaId, keys)
+    emitModulesUpdated(empresaId, keys)
+  }
+
+  async function load() {
     setLoading(true)
     setErr(null)
-
     try {
       const eid = getEmpresaId()
       setEmpresaId(eid)
@@ -112,10 +136,11 @@ export default function ModulosPage() {
       }
 
       const data = j as ListResponse
-      setRows(Array.isArray(data.modules) ? data.modules : [])
+      const next = Array.isArray(data.modules) ? data.modules : []
+      setRows(next)
 
-      // ✅ informa o header/menu que módulos podem ter mudado
-      if (andNotify) notifyModulesChanged(eid)
+      // ✅ mantém cache/menu consistente após refresh manual
+      syncHeaderMenu(next)
     } catch (e: any) {
       setErr(e?.message || "Erro inesperado ao carregar.")
       setRows([])
@@ -130,7 +155,7 @@ export default function ModulosPage() {
       return
     }
 
-    const meta = (MODULES as any)[module_key]
+    const meta = MODULES[module_key]
     const locked = Boolean(meta?.locked)
     const implemented = Boolean(meta?.implemented)
 
@@ -148,7 +173,11 @@ export default function ModulosPage() {
     setToast(null)
 
     // otimista
-    setRows((prev) => prev.map((r) => (r.module_key === module_key ? { ...r, enabled } : r)))
+    setRows((prev) => {
+      const next = prev.map((r) => (r.module_key === module_key ? { ...r, enabled } : r))
+      syncHeaderMenu(next) // ✅ header atualiza na hora
+      return next
+    })
 
     try {
       const r = await fetch("/api/admin/core/modules/toggle", {
@@ -166,20 +195,25 @@ export default function ModulosPage() {
       if (!r.ok || !j) throw new Error((j as any)?.error || "Falha ao atualizar módulo.")
 
       if ("ok" in j && j.ok === true) {
-        setRows((prev) => prev.map((x) => (x.module_key === module_key ? j.module : x)))
+        setRows((prev) => {
+          const next = prev.map((x) => (x.module_key === module_key ? j.module : x))
+          syncHeaderMenu(next) // ✅ garante consistência (server source-of-truth)
+          return next
+        })
         setToast({ kind: "ok", msg: `Módulo "${module_key}" atualizado.` })
-
-        // ✅ header atualiza na hora
-        notifyModulesChanged(empresaId)
         return
       }
 
       throw new Error((j as any)?.error || "Falha ao atualizar módulo.")
     } catch (e: any) {
       // rollback
-      setRows((prev) =>
-        prev.map((r) => (r.module_key === module_key ? { ...r, enabled: !enabled } : r))
-      )
+      setRows((prev) => {
+        const next = prev.map((r) =>
+          r.module_key === module_key ? { ...r, enabled: !enabled } : r
+        )
+        syncHeaderMenu(next) // ✅ rollback reflete no header
+        return next
+      })
       setToast({ kind: "err", msg: e?.message || "Erro inesperado." })
     } finally {
       setBusyKey(null)
@@ -187,7 +221,7 @@ export default function ModulosPage() {
   }
 
   useEffect(() => {
-    load(false)
+    load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -208,7 +242,7 @@ export default function ModulosPage() {
         </div>
 
         <button
-          onClick={() => load(true)}
+          onClick={load}
           className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 hover:bg-slate-900"
         >
           Atualizar
@@ -246,10 +280,15 @@ export default function ModulosPage() {
           </div>
         ) : (
           sortedRows.map((m) => {
-            const meta = (MODULES as any)[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
+            const meta = MODULES[m.module_key] ?? {
+              title: m.module_key,
+              desc: "—",
+              implemented: false,
+            }
+
             const isBusy = busyKey === m.module_key
-            const locked = Boolean(meta.locked)
-            const implemented = Boolean(meta.implemented)
+            const locked = Boolean((meta as any).locked)
+            const implemented = Boolean((meta as any).implemented)
             const disableToggle = locked || isBusy || !implemented
 
             return (
@@ -257,19 +296,21 @@ export default function ModulosPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
-                      <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
-
+                      <div
+                        className={classNames(
+                          "h-2.5 w-2.5 rounded-full",
+                          m.enabled ? "bg-emerald-400" : "bg-slate-600"
+                        )}
+                      />
+                      <div className="text-sm font-semibold text-slate-100">{(meta as any).title}</div>
                       <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
                       </span>
-
                       {locked ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           obrigatório
                         </span>
                       ) : null}
-
                       {!implemented ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           em breve
@@ -277,7 +318,7 @@ export default function ModulosPage() {
                       ) : null}
                     </div>
 
-                    <p className="mt-2 text-sm text-slate-400">{meta.desc}</p>
+                    <p className="mt-2 text-sm text-slate-400">{(meta as any).desc}</p>
 
                     <p className="mt-2 text-xs text-slate-500 font-mono">
                       Atualizado: {formatDt(m.updated_at)}
@@ -327,10 +368,15 @@ export default function ModulosPage() {
         ) : (
           <ul>
             {sortedRows.map((m) => {
-              const meta = (MODULES as any)[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
+              const meta = MODULES[m.module_key] ?? {
+                title: m.module_key,
+                desc: "—",
+                implemented: false,
+              }
+
               const isBusy = busyKey === m.module_key
-              const locked = Boolean(meta.locked)
-              const implemented = Boolean(meta.implemented)
+              const locked = Boolean((meta as any).locked)
+              const implemented = Boolean((meta as any).implemented)
               const disableToggle = locked || isBusy || !implemented
 
               return (
@@ -340,8 +386,13 @@ export default function ModulosPage() {
                 >
                   <div className="col-span-5">
                     <div className="flex items-center gap-2">
-                      <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
-                      <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
+                      <div
+                        className={classNames(
+                          "h-2.5 w-2.5 rounded-full",
+                          m.enabled ? "bg-emerald-400" : "bg-slate-600"
+                        )}
+                      />
+                      <div className="text-sm font-semibold text-slate-100">{(meta as any).title}</div>
 
                       <span className="ml-2 rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
@@ -363,9 +414,11 @@ export default function ModulosPage() {
                     </div>
                   </div>
 
-                  <div className="col-span-4 text-sm text-slate-400">{meta.desc}</div>
+                  <div className="col-span-4 text-sm text-slate-400">{(meta as any).desc}</div>
 
-                  <div className="col-span-2 text-xs text-slate-400 font-mono">{formatDt(m.updated_at)}</div>
+                  <div className="col-span-2 text-xs text-slate-400 font-mono">
+                    {formatDt(m.updated_at)}
+                  </div>
 
                   <div className="col-span-1 flex justify-end">
                     <button
