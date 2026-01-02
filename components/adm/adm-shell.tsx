@@ -3,7 +3,7 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu Dinâmico (v6.2)
+ * Etapa: Layout + Menu Dinâmico (v6.3)
  * Descrição:
  *  - Contexto SSR via cookies (/api/admin/core/context)
  *  - Empresa ativa via localStorage (moduz_empresa_id)
@@ -15,6 +15,7 @@
  *      - escuta "moduz:modules-updated" (toggle/list) para atualizar menu instantaneamente
  *  - Cache localStorage por empresa (evita “a atualizar…” no reload)
  *  - Evita “piscadas”: mantém menu atual durante refresh
+ *  - Header global inclui Logout (/auth/logout)
  * =============================================
  */
 
@@ -332,7 +333,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
             <span className="hidden md:inline text-xs text-slate-500">{headerSubtitle}</span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 md:gap-3">
             {loading ? (
               <span className="text-xs text-slate-500">A carregar…</span>
             ) : err ? (
@@ -356,6 +357,14 @@ export function AdmShell(props: { children: React.ReactNode }) {
               title="Gestão de Módulos"
             >
               Módulos
+            </a>
+
+            <a
+              href="/auth/logout"
+              className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
+              title="Sair"
+            >
+              Sair
             </a>
           </div>
         </div>
