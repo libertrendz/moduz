@@ -3,7 +3,7 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu Dinâmico (v6.1)
+ * Etapa: Layout + Menu Dinâmico (v6.2)
  * Descrição:
  *  - Contexto SSR via cookies (/api/admin/core/context)
  *  - Empresa ativa via localStorage (moduz_empresa_id)
@@ -77,6 +77,7 @@ function isModuleKey(x: string): x is ModuleKey {
   return x in MODULES
 }
 
+const CORE_ONLY: ModuleKey[] = ["core"]
 const LS_ENABLED_PREFIX = "moduz_enabled_modules::"
 
 function getEnabledModulesCache(empresaId: string): ModuleKey[] | null {
@@ -122,7 +123,9 @@ function buildMenu(keys: ModuleKey[]): NavItem[] {
 
 function emitEmpresaChanged(empresaId: string) {
   try {
-    window.dispatchEvent(new CustomEvent("moduz:empresa-changed", { detail: { empresa_id: empresaId } }))
+    window.dispatchEvent(
+      new CustomEvent("moduz:empresa-changed", { detail: { empresa_id: empresaId } })
+    )
   } catch {
     // ignore
   }
@@ -139,7 +142,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
   const [empresaId, setEmpresaId] = React.useState<string | null>(null)
 
   const [modulesLoading, setModulesLoading] = React.useState(false)
-  const [enabledKeys, setEnabledKeys] = React.useState<ModuleKey[]>(["core"])
+  const [enabledKeys, setEnabledKeys] = React.useState<ModuleKey[]>(CORE_ONLY)
 
   // mantém menu anterior enquanto atualiza
   const [menuItems, setMenuItems] = React.useState<NavItem[]>([{ href: "/adm", label: "Core" }])
@@ -158,7 +161,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
         setErr((j as any)?.error ?? "Falha ao carregar contexto.")
         setEmpresas([])
         setEmpresaId(null)
-        setEnabledKeys(["core"])
+        setEnabledKeys(CORE_ONLY)
         setMenuItems([{ href: "/adm", label: "Core" }])
         return
       }
@@ -188,19 +191,22 @@ export function AdmShell(props: { children: React.ReactNode }) {
         setEmpresaIdToStorage(nextEmpresa)
 
         const cached = getEnabledModulesCache(nextEmpresa)
-        const keys = cached?.length ? Array.from(new Set<ModuleKey>(["core", ...cached])) : ["core"]
+        const keys: ModuleKey[] = cached?.length
+          ? Array.from(new Set<ModuleKey>(["core", ...cached]))
+          : CORE_ONLY
+
         setEnabledKeys(keys)
         setMenuItems(buildMenu(keys))
       } else {
         setEmpresaId(null)
-        setEnabledKeys(["core"])
+        setEnabledKeys(CORE_ONLY)
         setMenuItems([{ href: "/adm", label: "Core" }])
       }
     } catch (e: any) {
       setErr(e?.message ?? "Erro inesperado ao carregar contexto.")
       setEmpresas([])
       setEmpresaId(null)
-      setEnabledKeys(["core"])
+      setEnabledKeys(CORE_ONLY)
       setMenuItems([{ href: "/adm", label: "Core" }])
     } finally {
       setLoading(false)
@@ -219,22 +225,18 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
       const j = safeJson<ModulesListResponse>(await r.json().catch(() => null))
 
-      if (!r.ok || !j || "error" in j) {
-        return
-      }
+      if (!r.ok || !j || "error" in j) return
 
       const enabled = (j.modules ?? [])
         .filter((m) => m.enabled)
         .map((m) => m.module_key)
         .filter((k): k is ModuleKey => typeof k === "string" && isModuleKey(k))
 
-      const uniq = Array.from(new Set<ModuleKey>(["core", ...enabled]))
+      const uniq: ModuleKey[] = Array.from(new Set<ModuleKey>(["core", ...enabled]))
 
       setEnabledKeys(uniq)
       setEnabledModulesCache(eid, uniq)
-
-      const nextMenu = buildMenu(uniq)
-      setMenuItems(nextMenu)
+      setMenuItems(buildMenu(uniq))
     } finally {
       setModulesLoading(false)
     }
@@ -265,7 +267,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
       if (!Array.isArray(keysRaw)) return
 
       const enabled = keysRaw.filter((x) => typeof x === "string" && isModuleKey(x)) as ModuleKey[]
-      const uniq = Array.from(new Set<ModuleKey>(["core", ...enabled]))
+      const uniq: ModuleKey[] = Array.from(new Set<ModuleKey>(["core", ...enabled]))
 
       setEnabledKeys(uniq)
       setEnabledModulesCache(eid, uniq)
@@ -282,11 +284,14 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
     // aplica cache imediatamente (se existir)
     const cached = getEnabledModulesCache(next)
-    const keys = cached?.length ? Array.from(new Set<ModuleKey>(["core", ...cached])) : ["core"]
+    const keys: ModuleKey[] = cached?.length
+      ? Array.from(new Set<ModuleKey>(["core", ...cached]))
+      : CORE_ONLY
+
     setEnabledKeys(keys)
     setMenuItems(buildMenu(keys))
 
-    // ✅ avisa páginas (ex.: /adm/core/modulos) para recarregarem sem botão "Atualizar"
+    // avisa páginas (ex.: /adm/core/modulos) para recarregarem sem botão "Atualizar"
     emitEmpresaChanged(next)
   }
 
