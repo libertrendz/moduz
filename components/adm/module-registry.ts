@@ -3,13 +3,24 @@
  * Moduz+ | Module Registry
  * Arquivo: components/adm/module-registry.ts
  * Módulo: Core
- * Etapa: Fonte única (v1)
+ * Etapa: Fonte única (v2)
  * Descrição:
- *  - Define metadados de módulos (título/descrição/implemented/locked)
- *  - Define rotas do menu por módulo
- *  - Evita “módulo fantasma” no menu e na UI de toggle
+ *  - Metadados de módulos (título/descrição/implemented/locked)
+ *  - Rotas de navegação por módulo (somente rotas existentes/previstas)
+ *  - Ordem canônica (para listagem e UI)
  * =============================================
  */
+
+export type ModuleKey =
+  | "core"
+  | "docs"
+  | "people"
+  | "track"
+  | "finance"
+  | "bizz"
+  | "stock"
+  | "assets"
+  | "flow"
 
 export type ModuleMeta = {
   title: string
@@ -18,7 +29,19 @@ export type ModuleMeta = {
   locked?: boolean
 }
 
-export const MODULES: Record<string, ModuleMeta> = {
+export const MODULE_ORDER: ModuleKey[] = [
+  "core",
+  "docs",
+  "people",
+  "track",
+  "finance",
+  "bizz",
+  "stock",
+  "assets",
+  "flow",
+]
+
+export const MODULES: Record<ModuleKey, ModuleMeta> = {
   core: {
     title: "Core",
     desc: "Base do sistema: empresas, perfis, settings, módulos e auditoria.",
@@ -67,26 +90,13 @@ export const MODULES: Record<string, ModuleMeta> = {
   },
 }
 
-export const MODULE_ORDER = [
-  "core",
-  "docs",
-  "people",
-  "track",
-  "finance",
-  "bizz",
-  "stock",
-  "assets",
-  "flow",
-] as const
+export type NavItem = {
+  href: string
+  label: string
+}
 
-export const ROUTES_BY_MODULE: Record<string, { href: string; label: string }> = {
+export const ROUTES_BY_MODULE: Partial<Record<ModuleKey, NavItem>> = {
   core: { href: "/adm", label: "Core" },
   docs: { href: "/adm/docs", label: "Docs" },
-  people: { href: "/adm/people", label: "People" },
-  track: { href: "/adm/track", label: "Track" },
-  finance: { href: "/adm/finance", label: "Finance" },
-  bizz: { href: "/adm/bizz", label: "Bizz" },
-  stock: { href: "/adm/stock", label: "Stock" },
-  assets: { href: "/adm/assets", label: "Assets" },
-  flow: { href: "/adm/flow", label: "Flow" },
+  // os demais entram quando existirem rotas reais + implemented=true
 }
