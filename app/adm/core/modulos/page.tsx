@@ -3,15 +3,15 @@
  * Moduz+ | Gestão de Módulos
  * Arquivo: app/adm/core/modulos/page.tsx
  * Módulo: Core
- * Etapa: UI List + Toggle (v3.1)
+ * Etapa: UI List + Toggle (v3.2)
  * Descrição:
  *  - Lista módulos por empresa
  *  - Toggle com feedback, loading e tratamento de erro
  *  - Regra Moduz: não permite ativar módulos não implementados (badge "Em breve")
  *  - Responsivo: cards no mobile, tabela no desktop (evita sobreposição)
- *  - Sincroniza menu do header via:
- *      - cache localStorage por empresa
- *      - evento window "moduz:modules-updated"
+ *  - Auto-sync:
+ *      - recarrega quando trocar empresa ("moduz:empresa-changed")
+ *      - atualiza header via "moduz:modules-updated"
  * =============================================
  */
 
@@ -58,17 +58,6 @@ function formatDt(v: string | null) {
   }
 }
 
-const LS_ENABLED_PREFIX = "moduz_enabled_modules::"
-
-function setEnabledModulesCache(empresaId: string, keys: string[]) {
-  try {
-    const uniq = Array.from(new Set(keys.filter(Boolean)))
-    window.localStorage.setItem(`${LS_ENABLED_PREFIX}${empresaId}`, JSON.stringify(uniq))
-  } catch {
-    // ignore
-  }
-}
-
 function emitModulesUpdated(empresaId: string, enabledKeys: string[]) {
   try {
     window.dispatchEvent(
@@ -96,24 +85,23 @@ export default function ModulosPage() {
     return MODULE_ORDER.map((k) => map.get(k)).filter(Boolean) as ModuleRow[]
   }, [rows])
 
-  function syncHeaderMenu(nextRows: ModuleRow[]) {
-    if (!empresaId) return
+  function syncHeaderFrom(nextRows: ModuleRow[], eid: string) {
     const enabled = nextRows.filter((m) => m.enabled).map((m) => m.module_key)
     const keys = Array.from(new Set(["core", ...enabled]))
-    setEnabledModulesCache(empresaId, keys)
-    emitModulesUpdated(empresaId, keys)
+    emitModulesUpdated(eid, keys)
   }
 
-  async function load() {
+  async function load(forceEmpresaId?: string | null) {
     setLoading(true)
     setErr(null)
+
     try {
-      const eid = getEmpresaId()
+      const eid = forceEmpresaId ?? getEmpresaId()
       setEmpresaId(eid)
 
       if (!eid) {
         setRows([])
-        setErr("EMPRESA_ID_AUSENTE: contexto não definiu empresa ativa.")
+        setErr("Empresa não definida.")
         return
       }
 
@@ -139,8 +127,8 @@ export default function ModulosPage() {
       const next = Array.isArray(data.modules) ? data.modules : []
       setRows(next)
 
-      // ✅ mantém cache/menu consistente após refresh manual
-      syncHeaderMenu(next)
+      // mantém header coerente após refresh
+      syncHeaderFrom(next, eid)
     } catch (e: any) {
       setErr(e?.message || "Erro inesperado ao carregar.")
       setRows([])
@@ -175,7 +163,7 @@ export default function ModulosPage() {
     // otimista
     setRows((prev) => {
       const next = prev.map((r) => (r.module_key === module_key ? { ...r, enabled } : r))
-      syncHeaderMenu(next) // ✅ header atualiza na hora
+      syncHeaderFrom(next, empresaId) // header muda na hora
       return next
     })
 
@@ -197,7 +185,7 @@ export default function ModulosPage() {
       if ("ok" in j && j.ok === true) {
         setRows((prev) => {
           const next = prev.map((x) => (x.module_key === module_key ? j.module : x))
-          syncHeaderMenu(next) // ✅ garante consistência (server source-of-truth)
+          syncHeaderFrom(next, empresaId) // confirma com o server
           return next
         })
         setToast({ kind: "ok", msg: `Módulo "${module_key}" atualizado.` })
@@ -211,7 +199,7 @@ export default function ModulosPage() {
         const next = prev.map((r) =>
           r.module_key === module_key ? { ...r, enabled: !enabled } : r
         )
-        syncHeaderMenu(next) // ✅ rollback reflete no header
+        syncHeaderFrom(next, empresaId)
         return next
       })
       setToast({ kind: "err", msg: e?.message || "Erro inesperado." })
@@ -222,6 +210,20 @@ export default function ModulosPage() {
 
   useEffect(() => {
     load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ✅ auto-refresh ao trocar empresa no switcher
+  useEffect(() => {
+    const onEmpresaChanged = (ev: Event) => {
+      const detail = (ev as CustomEvent)?.detail as { empresa_id?: string } | undefined
+      const eid = detail?.empresa_id ?? null
+      if (!eid) return
+      load(eid)
+    }
+
+    window.addEventListener("moduz:empresa-changed", onEmpresaChanged as any)
+    return () => window.removeEventListener("moduz:empresa-changed", onEmpresaChanged as any)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -242,7 +244,7 @@ export default function ModulosPage() {
         </div>
 
         <button
-          onClick={load}
+          onClick={() => load()}
           className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 hover:bg-slate-900"
         >
           Atualizar
@@ -280,15 +282,10 @@ export default function ModulosPage() {
           </div>
         ) : (
           sortedRows.map((m) => {
-            const meta = MODULES[m.module_key] ?? {
-              title: m.module_key,
-              desc: "—",
-              implemented: false,
-            }
-
+            const meta = MODULES[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
             const isBusy = busyKey === m.module_key
-            const locked = Boolean((meta as any).locked)
-            const implemented = Boolean((meta as any).implemented)
+            const locked = Boolean(meta.locked)
+            const implemented = Boolean(meta.implemented)
             const disableToggle = locked || isBusy || !implemented
 
             return (
@@ -296,21 +293,19 @@ export default function ModulosPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <div
-                        className={classNames(
-                          "h-2.5 w-2.5 rounded-full",
-                          m.enabled ? "bg-emerald-400" : "bg-slate-600"
-                        )}
-                      />
-                      <div className="text-sm font-semibold text-slate-100">{(meta as any).title}</div>
+                      <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
+                      <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
+
                       <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
                       </span>
+
                       {locked ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           obrigatório
                         </span>
                       ) : null}
+
                       {!implemented ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           em breve
@@ -318,12 +313,8 @@ export default function ModulosPage() {
                       ) : null}
                     </div>
 
-                    <p className="mt-2 text-sm text-slate-400">{(meta as any).desc}</p>
-
-                    <p className="mt-2 text-xs text-slate-500 font-mono">
-                      Atualizado: {formatDt(m.updated_at)}
-                    </p>
-
+                    <p className="mt-2 text-sm text-slate-400">{meta.desc}</p>
+                    <p className="mt-2 text-xs text-slate-500 font-mono">Atualizado: {formatDt(m.updated_at)}</p>
                     {isBusy ? <p className="mt-2 text-xs text-slate-500">a atualizar…</p> : null}
                   </div>
 
@@ -368,31 +359,18 @@ export default function ModulosPage() {
         ) : (
           <ul>
             {sortedRows.map((m) => {
-              const meta = MODULES[m.module_key] ?? {
-                title: m.module_key,
-                desc: "—",
-                implemented: false,
-              }
-
+              const meta = MODULES[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
               const isBusy = busyKey === m.module_key
-              const locked = Boolean((meta as any).locked)
-              const implemented = Boolean((meta as any).implemented)
+              const locked = Boolean(meta.locked)
+              const implemented = Boolean(meta.implemented)
               const disableToggle = locked || isBusy || !implemented
 
               return (
-                <li
-                  key={m.module_key}
-                  className="grid grid-cols-12 gap-0 px-4 py-4 border-b border-slate-900 last:border-b-0"
-                >
+                <li key={m.module_key} className="grid grid-cols-12 gap-0 px-4 py-4 border-b border-slate-900 last:border-b-0">
                   <div className="col-span-5">
                     <div className="flex items-center gap-2">
-                      <div
-                        className={classNames(
-                          "h-2.5 w-2.5 rounded-full",
-                          m.enabled ? "bg-emerald-400" : "bg-slate-600"
-                        )}
-                      />
-                      <div className="text-sm font-semibold text-slate-100">{(meta as any).title}</div>
+                      <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
+                      <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
 
                       <span className="ml-2 rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
@@ -414,11 +392,8 @@ export default function ModulosPage() {
                     </div>
                   </div>
 
-                  <div className="col-span-4 text-sm text-slate-400">{(meta as any).desc}</div>
-
-                  <div className="col-span-2 text-xs text-slate-400 font-mono">
-                    {formatDt(m.updated_at)}
-                  </div>
+                  <div className="col-span-4 text-sm text-slate-400">{meta.desc}</div>
+                  <div className="col-span-2 text-xs text-slate-400 font-mono">{formatDt(m.updated_at)}</div>
 
                   <div className="col-span-1 flex justify-end">
                     <button
