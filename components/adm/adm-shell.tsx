@@ -3,16 +3,17 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu Dinâmico (v6)
+ * Etapa: Layout + Menu Dinâmico (v4.3)
  * Descrição:
  *  - Contexto SSR via cookies (/api/admin/core/context)
  *  - Empresa ativa via localStorage (moduz_empresa_id)
- *  - Menu dinâmico (premium):
+ *  - Menu dinâmico:
  *      - Core sempre
- *      - Demais: somente se (enabled no DB) E (implemented no código) E (tem rota no registry)
- *  - Atualiza menu em tempo real:
- *      - escuta evento window "moduz:modules-changed" disparado pela página de módulos
- *  - Evita “piscadas” removendo o comportamento de limpar o menu em loading
+ *      - demais: somente se (enabled no DB) E (implemented no código)
+ *  - Atualização imediata do menu após toggle:
+ *      - Cache localStorage por empresa
+ *      - Evento window "moduz:modules-updated"
+ *  - Evita “piscadas”: mantém menu atual enquanto atualiza em background
  * =============================================
  */
 
@@ -25,7 +26,8 @@ import {
   getEmpresaIdFromStorage,
   setEmpresaIdToStorage,
 } from "./empresa-switcher"
-import { MODULES, ROUTES_BY_MODULE, type ModuleKey } from "./module-registry"
+import { MODULES, ROUTES_BY_MODULE } from "./module-registry"
+import { usePathname } from "next/navigation"
 
 type CoreContextResponse =
   | {
@@ -60,8 +62,6 @@ type ModulesListResponse =
   | { empresa_id: string; modules: ModuleRow[] }
   | { error: string; details?: string | null }
 
-type NavItem = { href: string; label: string }
-
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ")
 }
@@ -70,12 +70,33 @@ function safeJson<T>(x: any): T | null {
   return x && typeof x === "object" ? (x as T) : null
 }
 
-function isModuleKey(x: string): x is ModuleKey {
-  return x in MODULES
+const LS_ENABLED_PREFIX = "moduz_enabled_modules::"
+
+function getEnabledModulesCache(empresaId: string): string[] | null {
+  try {
+    const raw = window.localStorage.getItem(`${LS_ENABLED_PREFIX}${empresaId}`)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return null
+    const arr = parsed.filter((x) => typeof x === "string")
+    return arr.length ? arr : null
+  } catch {
+    return null
+  }
+}
+
+function setEnabledModulesCache(empresaId: string, keys: string[]) {
+  try {
+    const uniq = Array.from(new Set(keys.filter(Boolean)))
+    window.localStorage.setItem(`${LS_ENABLED_PREFIX}${empresaId}`, JSON.stringify(uniq))
+  } catch {
+    // ignore
+  }
 }
 
 export function AdmShell(props: { children: React.ReactNode }) {
   const { children } = props
+  const pathname = usePathname()
 
   const [loading, setLoading] = React.useState(true)
   const [err, setErr] = React.useState<string | null>(null)
@@ -84,12 +105,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
   const [empresaId, setEmpresaId] = React.useState<string | null>(null)
 
   const [modulesLoading, setModulesLoading] = React.useState(false)
-  const [enabledKeys, setEnabledKeys] = React.useState<ModuleKey[]>(["core"])
-
-  // mantém o menu anterior durante loading -> reduz “pisca”
-  const [menuItems, setMenuItems] = React.useState<NavItem[]>([
-    { href: "/adm", label: "Core" },
-  ])
+  const [enabledKeys, setEnabledKeys] = React.useState<string[]>(["core"])
 
   const [logoOk, setLogoOk] = React.useState(true)
 
@@ -131,13 +147,24 @@ export function AdmShell(props: { children: React.ReactNode }) {
       if (nextEmpresa) {
         setEmpresaId(nextEmpresa)
         setEmpresaIdToStorage(nextEmpresa)
+
+        // ✅ Cache-first: se tiver cache, nasce com menu correto e atualiza em background
+        const cached = getEnabledModulesCache(nextEmpresa)
+        if (cached?.length) {
+          const uniq = Array.from(new Set(["core", ...cached]))
+          setEnabledKeys(uniq)
+        } else {
+          setEnabledKeys(["core"])
+        }
       } else {
         setEmpresaId(null)
+        setEnabledKeys(["core"])
       }
     } catch (e: any) {
       setErr(e?.message ?? "Erro inesperado ao carregar contexto.")
       setEmpresas([])
       setEmpresaId(null)
+      setEnabledKeys(["core"])
     } finally {
       setLoading(false)
     }
@@ -145,7 +172,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
   async function loadEnabledModules(eid: string) {
     setModulesLoading(true)
-
     try {
       const r = await fetch("/api/admin/core/modules/list", {
         method: "GET",
@@ -156,43 +182,20 @@ export function AdmShell(props: { children: React.ReactNode }) {
       const j = safeJson<ModulesListResponse>(await r.json().catch(() => null))
 
       if (!r.ok || !j || "error" in j) {
-        setEnabledKeys(["core"])
+        setEnabledKeys((prev) => (prev?.length ? prev : ["core"]))
         return
       }
 
-      const enabled = (j.modules ?? [])
-        .filter((m) => m.enabled)
-        .map((m) => m.module_key)
-        .filter((k): k is ModuleKey => typeof k === "string" && isModuleKey(k))
+      const enabled = (j.modules ?? []).filter((m) => m.enabled).map((m) => m.module_key) ?? []
+      const uniq = Array.from(new Set(["core", ...enabled]))
 
-      const uniq = Array.from(new Set<ModuleKey>(["core", ...enabled]))
       setEnabledKeys(uniq)
+      setEnabledModulesCache(eid, uniq)
     } catch {
-      setEnabledKeys(["core"])
+      setEnabledKeys((prev) => (prev?.length ? prev : ["core"]))
     } finally {
       setModulesLoading(false)
     }
-  }
-
-  function buildMenu(keys: ModuleKey[]): NavItem[] {
-    const allowedKeys = keys.filter((k) => {
-      if (k === "core") return true
-      if (!MODULES[k]?.implemented) return false
-      if (!ROUTES_BY_MODULE[k]) return false
-      return true
-    })
-
-    const sortedKeys = [...allowedKeys].sort((a, b) => {
-      if (a === "core") return -1
-      if (b === "core") return 1
-      const al = ROUTES_BY_MODULE[a]?.label ?? a
-      const bl = ROUTES_BY_MODULE[b]?.label ?? b
-      return String(al).localeCompare(String(bl))
-    })
-
-    return sortedKeys
-      .map((k) => ROUTES_BY_MODULE[k])
-      .filter(Boolean) as NavItem[]
   }
 
   React.useEffect(() => {
@@ -206,44 +209,76 @@ export function AdmShell(props: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresaId])
 
-  // sempre que enabledKeys muda, reconstrói menu (sem apagar menu durante loading)
+  // ✅ Atualiza menu IMEDIATO quando a página de módulos faz toggle
   React.useEffect(() => {
-    const next = buildMenu(enabledKeys)
-    // evita update desnecessário (menos flicker)
-    const same =
-      next.length === menuItems.length &&
-      next.every((x, i) => x.href === menuItems[i]?.href && x.label === menuItems[i]?.label)
-
-    if (!same) setMenuItems(next)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabledKeys])
-
-  // ✅ escuta mudanças disparadas pela página de módulos (refresh imediato do header)
-  React.useEffect(() => {
-    const onModulesChanged = (ev: Event) => {
-      const detail = (ev as CustomEvent)?.detail as { empresa_id?: string } | undefined
-      const eid = detail?.empresa_id ?? empresaId
-      if (!eid) return
-      loadEnabledModules(eid)
+    function onUpdated(ev: any) {
+      try {
+        const detail = ev?.detail
+        const eid = detail?.empresa_id
+        const keys = detail?.enabled_keys
+        if (!eid || eid !== empresaId) return
+        if (!Array.isArray(keys)) return
+        const uniq = Array.from(new Set(["core", ...keys.filter((x: any) => typeof x === "string")]))
+        setEnabledKeys(uniq)
+        setEnabledModulesCache(eid, uniq)
+      } catch {
+        // ignore
+      }
     }
 
-    window.addEventListener("moduz:modules-changed", onModulesChanged as any)
-    return () => window.removeEventListener("moduz:modules-changed", onModulesChanged as any)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    window.addEventListener("moduz:modules-updated", onUpdated as any)
+    return () => window.removeEventListener("moduz:modules-updated", onUpdated as any)
   }, [empresaId])
 
   function onChangeEmpresaId(next: string) {
     setEmpresaId(next)
     setEmpresaIdToStorage(next)
+
+    // aplica cache imediatamente (se existir), e o fetch depois corrige
+    const cached = getEnabledModulesCache(next)
+    if (cached?.length) {
+      setEnabledKeys(Array.from(new Set(["core", ...cached])))
+    } else {
+      setEnabledKeys(["core"])
+    }
   }
+
+  const menuItems = React.useMemo(() => {
+    const allowedKeys = enabledKeys.filter((k) => {
+      if (k === "core") return true
+      const meta = MODULES[k]
+      return Boolean(meta?.implemented)
+    })
+
+    const sortedKeys = [...allowedKeys].sort((a, b) => {
+      if (a === "core") return -1
+      if (b === "core") return 1
+      const al = ROUTES_BY_MODULE[a]?.label ?? a
+      const bl = ROUTES_BY_MODULE[b]?.label ?? b
+      return String(al).localeCompare(String(bl))
+    })
+
+    return sortedKeys
+      .map((k) => ROUTES_BY_MODULE[k])
+      .filter(Boolean) as Array<{ href: string; label: string }>
+  }, [enabledKeys])
 
   const headerSubtitle = React.useMemo(() => {
     if (!empresaId) return "Sem empresa ativa"
     const current = empresas.find((e) => e.empresa_id === empresaId)
-    const nome = current?.empresa_nome ?? null
-    const role = current?.role ?? null
+    const nome = (current as any)?.empresa_nome ?? null
+    const role = (current as any)?.role ?? null
     return `${nome ?? "Empresa"}${role ? ` • ${role}` : ""}`
   }, [empresaId, empresas])
+
+  const isActive = React.useCallback(
+    (href: string) => {
+      if (!pathname) return false
+      if (href === "/adm") return pathname === "/adm"
+      return pathname.startsWith(href)
+    },
+    [pathname]
+  )
 
   return (
     <div className="min-h-screen bg-black text-slate-100">
@@ -267,7 +302,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
           <div className="flex items-center gap-3">
             {loading ? (
-              <span className="text-xs text-slate-500">A carregar…</span>
+              <span className="text-xs text-slate-500">A carregar contexto…</span>
             ) : err ? (
               <span className="text-xs text-red-300">{err}</span>
             ) : (
@@ -280,7 +315,12 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
             <a
               href="/adm/core/modulos"
-              className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
+              className={classNames(
+                "rounded-md border px-3 py-2 text-xs",
+                isActive("/adm/core/modulos")
+                  ? "border-slate-700 bg-slate-900 text-slate-50"
+                  : "border-slate-800 bg-slate-950 text-slate-200 hover:bg-slate-900"
+              )}
               title="Gestão de Módulos"
             >
               Módulos
@@ -295,9 +335,10 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 key={it.href}
                 href={it.href}
                 className={classNames(
-                  "rounded-md border px-3 py-1.5 text-sm",
-                  "border-slate-900 bg-slate-950 text-slate-200 hover:bg-slate-900",
-                  modulesLoading ? "opacity-90" : ""
+                  "rounded-md border px-3 py-1.5 text-sm transition",
+                  isActive(it.href)
+                    ? "border-slate-700 bg-slate-900 text-slate-50"
+                    : "border-slate-900 bg-slate-950 text-slate-200 hover:bg-slate-900"
                 )}
               >
                 {it.label}
