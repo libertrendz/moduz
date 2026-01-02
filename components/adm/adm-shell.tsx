@@ -3,15 +3,14 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu Dinâmico (v4.2)
+ * Etapa: Layout + Menu Dinâmico (v5)
  * Descrição:
- *  - Contexto SSR por cookies (empresas acessíveis)
+ *  - Contexto SSR via cookies (fetch /api/admin/core/context)
  *  - Empresa ativa via localStorage (moduz_empresa_id)
- *  - Menu dinâmico:
- *      - Core sempre
- *      - demais: somente se (enabled no DB) E (implemented no código)
- *  - Ordenação: Core primeiro, depois por label (alfabético)
- *  - Não depende de "order" no ModuleMeta (evita quebra de tipo)
+ *  - Menu dinâmico (premium):
+ *      - Sempre mostra Core
+ *      - Mostra apenas módulos (enabled no DB) E (implemented no código) E (tem rota no registry)
+ *  - Sem texto de debug no UI
  * =============================================
  */
 
@@ -24,7 +23,7 @@ import {
   getEmpresaIdFromStorage,
   setEmpresaIdToStorage,
 } from "./empresa-switcher"
-import { MODULES, ROUTES_BY_MODULE } from "./module-registry"
+import { MODULES, ROUTES_BY_MODULE, type ModuleKey } from "./module-registry"
 
 type CoreContextResponse =
   | {
@@ -67,6 +66,10 @@ function safeJson<T>(x: any): T | null {
   return x && typeof x === "object" ? (x as T) : null
 }
 
+function isModuleKey(x: string): x is ModuleKey {
+  return x in MODULES
+}
+
 export function AdmShell(props: { children: React.ReactNode }) {
   const { children } = props
 
@@ -77,7 +80,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
   const [empresaId, setEmpresaId] = React.useState<string | null>(null)
 
   const [modulesLoading, setModulesLoading] = React.useState(false)
-  const [enabledKeys, setEnabledKeys] = React.useState<string[]>(["core"])
+  const [enabledKeys, setEnabledKeys] = React.useState<ModuleKey[]>(["core"])
 
   const [logoOk, setLogoOk] = React.useState(true)
 
@@ -98,11 +101,12 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
       const data = j as Extract<CoreContextResponse, { ok: true }>
 
+      // ✅ alinhar com EmpresaItem (empresa_nome) do empresa-switcher.tsx
       const empresasNormalized: EmpresaItem[] = (data.empresas ?? []).map((e) => ({
         empresa_id: e.empresa_id,
         ativo: e.ativo !== false,
         role: e.role ?? "",
-        nome: e.nome ?? null,
+        empresa_nome: e.nome ?? null,
       }))
 
       setEmpresas(empresasNormalized)
@@ -133,6 +137,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
   async function loadEnabledModules(eid: string) {
     setModulesLoading(true)
+
     try {
       const r = await fetch("/api/admin/core/modules/list", {
         method: "GET",
@@ -147,10 +152,12 @@ export function AdmShell(props: { children: React.ReactNode }) {
         return
       }
 
-      const enabled =
-        (j.modules ?? []).filter((m) => m.enabled).map((m) => m.module_key) ?? []
+      const enabled = (j.modules ?? [])
+        .filter((m) => m.enabled)
+        .map((m) => m.module_key)
+        .filter((k): k is ModuleKey => typeof k === "string" && isModuleKey(k))
 
-      const uniq = Array.from(new Set(["core", ...enabled]))
+      const uniq = Array.from(new Set<ModuleKey>(["core", ...enabled]))
       setEnabledKeys(uniq)
     } catch {
       setEnabledKeys(["core"])
@@ -176,16 +183,17 @@ export function AdmShell(props: { children: React.ReactNode }) {
   }
 
   /**
-   * ✅ MENU DINÂMICO
-   * - Trabalha com module_key
-   * - Filtra por implemented (código) + enabled (DB)
-   * - Ordena: Core primeiro, depois por label
+   * ✅ MENU DINÂMICO (limpo e previsível)
+   * - Só aparece se:
+   *    enabled (DB) + implemented (código) + rota no registry
+   * - Ordena: Core primeiro, depois label
    */
   const menuItems = React.useMemo(() => {
     const allowedKeys = enabledKeys.filter((k) => {
       if (k === "core") return true
-      const meta = MODULES[k]
-      return Boolean(meta?.implemented)
+      if (!MODULES[k]?.implemented) return false
+      if (!ROUTES_BY_MODULE[k]) return false
+      return true
     })
 
     const sortedKeys = [...allowedKeys].sort((a, b) => {
@@ -204,8 +212,8 @@ export function AdmShell(props: { children: React.ReactNode }) {
   const headerSubtitle = React.useMemo(() => {
     if (!empresaId) return "Sem empresa ativa"
     const current = empresas.find((e) => e.empresa_id === empresaId)
-    const nome = (current as any)?.nome ?? (current as any)?.empresa_nome ?? null
-    const role = (current as any)?.role ?? null
+    const nome = current?.empresa_nome ?? null
+    const role = current?.role ?? null
     return `${nome ?? "Empresa"}${role ? ` • ${role}` : ""}`
   }, [empresaId, empresas])
 
@@ -231,7 +239,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
           <div className="flex items-center gap-3">
             {loading ? (
-              <span className="text-xs text-slate-500">A carregar contexto…</span>
+              <span className="text-xs text-slate-500">A carregar…</span>
             ) : err ? (
               <span className="text-xs text-red-300">{err}</span>
             ) : (
@@ -255,7 +263,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
         <div className="mx-auto max-w-6xl px-4 pb-4">
           <nav className="flex flex-wrap items-center gap-2">
             {modulesLoading ? (
-              <span className="text-xs text-slate-500">A carregar menu…</span>
+              <span className="text-xs text-slate-500">A carregar…</span>
             ) : (
               menuItems.map((it) => (
                 <a
