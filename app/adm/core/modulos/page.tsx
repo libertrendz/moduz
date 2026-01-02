@@ -3,7 +3,7 @@
  * Moduz+ | Gestão de Módulos
  * Arquivo: app/adm/core/modulos/page.tsx
  * Módulo: Core
- * Etapa: UI List + Toggle (v3.2)
+ * Etapa: UI List + Toggle (v3.3)
  * Descrição:
  *  - Lista módulos por empresa
  *  - Toggle com feedback, loading e tratamento de erro
@@ -12,6 +12,7 @@
  *  - Auto-sync:
  *      - recarrega quando trocar empresa ("moduz:empresa-changed")
  *      - atualiza header via "moduz:modules-updated"
+ *  - Toast flutuante (não empurra layout)
  * =============================================
  */
 
@@ -126,8 +127,6 @@ export default function ModulosPage() {
       const data = j as ListResponse
       const next = Array.isArray(data.modules) ? data.modules : []
       setRows(next)
-
-      // mantém header coerente após refresh
       syncHeaderFrom(next, eid)
     } catch (e: any) {
       setErr(e?.message || "Erro inesperado ao carregar.")
@@ -160,10 +159,9 @@ export default function ModulosPage() {
     setBusyKey(module_key)
     setToast(null)
 
-    // otimista
     setRows((prev) => {
       const next = prev.map((r) => (r.module_key === module_key ? { ...r, enabled } : r))
-      syncHeaderFrom(next, empresaId) // header muda na hora
+      syncHeaderFrom(next, empresaId)
       return next
     })
 
@@ -185,7 +183,7 @@ export default function ModulosPage() {
       if ("ok" in j && j.ok === true) {
         setRows((prev) => {
           const next = prev.map((x) => (x.module_key === module_key ? j.module : x))
-          syncHeaderFrom(next, empresaId) // confirma com o server
+          syncHeaderFrom(next, empresaId)
           return next
         })
         setToast({ kind: "ok", msg: `Módulo "${module_key}" atualizado.` })
@@ -194,11 +192,8 @@ export default function ModulosPage() {
 
       throw new Error((j as any)?.error || "Falha ao atualizar módulo.")
     } catch (e: any) {
-      // rollback
       setRows((prev) => {
-        const next = prev.map((r) =>
-          r.module_key === module_key ? { ...r, enabled: !enabled } : r
-        )
+        const next = prev.map((r) => (r.module_key === module_key ? { ...r, enabled: !enabled } : r))
         syncHeaderFrom(next, empresaId)
         return next
       })
@@ -213,7 +208,6 @@ export default function ModulosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ✅ auto-refresh ao trocar empresa no switcher
   useEffect(() => {
     const onEmpresaChanged = (ev: Event) => {
       const detail = (ev as CustomEvent)?.detail as { empresa_id?: string } | undefined
@@ -229,12 +223,28 @@ export default function ModulosPage() {
 
   useEffect(() => {
     if (!toast) return
-    const t = window.setTimeout(() => setToast(null), 2800)
+    const t = window.setTimeout(() => setToast(null), 2400)
     return () => window.clearTimeout(t)
   }, [toast])
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
+      {/* TOAST flutuante */}
+      {toast ? (
+        <div className="fixed top-4 right-4 z-50 max-w-[92vw] md:max-w-sm">
+          <div
+            className={classNames(
+              "rounded-lg border px-3 py-2 text-sm shadow-lg backdrop-blur",
+              toast.kind === "ok"
+                ? "border-emerald-900/60 bg-emerald-950/80 text-emerald-200"
+                : "border-red-900/60 bg-red-950/80 text-red-200"
+            )}
+          >
+            {toast.msg}
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-50">Gestão de Módulos</h1>
@@ -250,19 +260,6 @@ export default function ModulosPage() {
           Atualizar
         </button>
       </div>
-
-      {toast ? (
-        <div
-          className={classNames(
-            "mt-4 rounded-lg border px-3 py-2 text-sm",
-            toast.kind === "ok"
-              ? "border-emerald-900/60 bg-emerald-950/30 text-emerald-200"
-              : "border-red-900/60 bg-red-950/30 text-red-200"
-          )}
-        >
-          {toast.msg}
-        </div>
-      ) : null}
 
       {err ? (
         <div className="mt-4 rounded-lg border border-red-900/60 bg-red-950/30 p-3">
