@@ -31,6 +31,10 @@ import {
 import { MODULES, ROUTES_BY_MODULE, type ModuleKey } from "./module-registry"
 import { usePathname } from "next/navigation"
 
+// ✅ Toast global (provider + overlay)
+import { ToastProvider } from "../ui/toast-context"
+import { ToastHost } from "../ui/toast-host"
+
 type CoreContextResponse =
   | {
       ok: true
@@ -314,86 +318,92 @@ export function AdmShell(props: { children: React.ReactNode }) {
   )
 
   return (
-    <div className="min-h-screen bg-black text-slate-100">
-      <header className="sticky top-0 z-20 border-b border-slate-900 bg-black/70 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
-          <div className="flex items-center gap-3">
-            <a href="/adm" className="flex items-center gap-3">
-              {logoOk ? (
-                <img
-                  src="/brand/moduzplus-wordmark-ret.png"
-                  alt="Moduz+"
-                  className="h-12 w-auto md:h-14 shrink-0"
-                  onError={() => setLogoOk(false)}
-                />
-              ) : (
-                <span className="text-base font-semibold tracking-wide">Moduz+</span>
-              )}
-            </a>
-            <span className="hidden md:inline text-xs text-slate-500">{headerSubtitle}</span>
-          </div>
-
-          <div className="flex items-center gap-2 md:gap-3">
-            {loading ? (
-              <span className="text-xs text-slate-500">A carregar…</span>
-            ) : err ? (
-              <span className="text-xs text-red-300">{err}</span>
-            ) : (
-              <EmpresaSwitcher
-                empresas={empresas}
-                activeEmpresaId={empresaId}
-                onChangeEmpresaId={onChangeEmpresaId}
-              />
-            )}
-
-            <a
-              href="/adm/core/modulos"
-              className={classNames(
-                "rounded-md border px-3 py-2 text-xs transition",
-                isActive("/adm/core/modulos")
-                  ? "border-slate-700 bg-slate-900 text-slate-50"
-                  : "border-slate-800 bg-slate-950 text-slate-200 hover:bg-slate-900"
-              )}
-              title="Gestão de Módulos"
-            >
-              Módulos
-            </a>
-
-            <a
-              href="/auth/logout"
-              className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
-              title="Sair"
-            >
-              Sair
-            </a>
-          </div>
-        </div>
-
-        <div className="mx-auto max-w-6xl px-4 pb-4">
-          <nav className="flex flex-wrap items-center gap-2">
-            {menuItems.map((it) => (
-              <a
-                key={it.href}
-                href={it.href}
-                className={classNames(
-                  "rounded-md border px-3 py-1.5 text-sm transition",
-                  isActive(it.href)
-                    ? "border-slate-700 bg-slate-900 text-slate-50"
-                    : "border-slate-900 bg-slate-950 text-slate-200 hover:bg-slate-900"
+    // ✅ ToastProvider envolve tudo (sem mexer em mais nada)
+    <ToastProvider>
+      <div className="min-h-screen bg-black text-slate-100">
+        <header className="sticky top-0 z-20 border-b border-slate-900 bg-black/70 backdrop-blur">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
+            <div className="flex items-center gap-3">
+              <a href="/adm" className="flex items-center gap-3">
+                {logoOk ? (
+                  <img
+                    src="/brand/moduzplus-wordmark-ret.png"
+                    alt="Moduz+"
+                    className="h-12 w-auto md:h-14 shrink-0"
+                    onError={() => setLogoOk(false)}
+                  />
+                ) : (
+                  <span className="text-base font-semibold tracking-wide">Moduz+</span>
                 )}
-              >
-                {it.label}
               </a>
-            ))}
+              <span className="hidden md:inline text-xs text-slate-500">{headerSubtitle}</span>
+            </div>
 
-            {modulesLoading ? (
-              <span className="ml-2 text-xs text-slate-500">a atualizar…</span>
-            ) : null}
-          </nav>
-        </div>
-      </header>
+            <div className="flex items-center gap-2 md:gap-3">
+              {loading ? (
+                <span className="text-xs text-slate-500">A carregar…</span>
+              ) : err ? (
+                <span className="text-xs text-red-300">{err}</span>
+              ) : (
+                <EmpresaSwitcher
+                  empresas={empresas}
+                  activeEmpresaId={empresaId}
+                  onChangeEmpresaId={onChangeEmpresaId}
+                />
+              )}
 
-      <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
-    </div>
+              <a
+                href="/adm/core/modulos"
+                className={classNames(
+                  "rounded-md border px-3 py-2 text-xs transition",
+                  isActive("/adm/core/modulos")
+                    ? "border-slate-700 bg-slate-900 text-slate-50"
+                    : "border-slate-800 bg-slate-950 text-slate-200 hover:bg-slate-900"
+                )}
+                title="Gestão de Módulos"
+              >
+                Módulos
+              </a>
+
+              <a
+                href="/auth/logout"
+                className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
+                title="Sair"
+              >
+                Sair
+              </a>
+            </div>
+          </div>
+
+          <div className="mx-auto max-w-6xl px-4 pb-4">
+            <nav className="flex flex-wrap items-center gap-2">
+              {menuItems.map((it) => (
+                <a
+                  key={it.href}
+                  href={it.href}
+                  className={classNames(
+                    "rounded-md border px-3 py-1.5 text-sm transition",
+                    isActive(it.href)
+                      ? "border-slate-700 bg-slate-900 text-slate-50"
+                      : "border-slate-900 bg-slate-950 text-slate-200 hover:bg-slate-900"
+                  )}
+                >
+                  {it.label}
+                </a>
+              ))}
+
+              {modulesLoading ? (
+                <span className="ml-2 text-xs text-slate-500">a atualizar…</span>
+              ) : null}
+            </nav>
+          </div>
+        </header>
+
+        <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+
+        {/* ✅ Toast overlay (não empurra layout) */}
+        <ToastHost />
+      </div>
+    </ToastProvider>
   )
 }
