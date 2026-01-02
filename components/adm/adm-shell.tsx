@@ -3,14 +3,16 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu Dinâmico (v5)
+ * Etapa: Layout + Menu Dinâmico (v6)
  * Descrição:
- *  - Contexto SSR via cookies (fetch /api/admin/core/context)
+ *  - Contexto SSR via cookies (/api/admin/core/context)
  *  - Empresa ativa via localStorage (moduz_empresa_id)
  *  - Menu dinâmico (premium):
- *      - Sempre mostra Core
- *      - Mostra apenas módulos (enabled no DB) E (implemented no código) E (tem rota no registry)
- *  - Sem texto de debug no UI
+ *      - Core sempre
+ *      - Demais: somente se (enabled no DB) E (implemented no código) E (tem rota no registry)
+ *  - Atualiza menu em tempo real:
+ *      - escuta evento window "moduz:modules-changed" disparado pela página de módulos
+ *  - Evita “piscadas” removendo o comportamento de limpar o menu em loading
  * =============================================
  */
 
@@ -58,6 +60,8 @@ type ModulesListResponse =
   | { empresa_id: string; modules: ModuleRow[] }
   | { error: string; details?: string | null }
 
+type NavItem = { href: string; label: string }
+
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ")
 }
@@ -82,6 +86,11 @@ export function AdmShell(props: { children: React.ReactNode }) {
   const [modulesLoading, setModulesLoading] = React.useState(false)
   const [enabledKeys, setEnabledKeys] = React.useState<ModuleKey[]>(["core"])
 
+  // mantém o menu anterior durante loading -> reduz “pisca”
+  const [menuItems, setMenuItems] = React.useState<NavItem[]>([
+    { href: "/adm", label: "Core" },
+  ])
+
   const [logoOk, setLogoOk] = React.useState(true)
 
   async function loadContext() {
@@ -101,7 +110,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
       const data = j as Extract<CoreContextResponse, { ok: true }>
 
-      // ✅ alinhar com EmpresaItem (empresa_nome) do empresa-switcher.tsx
       const empresasNormalized: EmpresaItem[] = (data.empresas ?? []).map((e) => ({
         empresa_id: e.empresa_id,
         ativo: e.ativo !== false,
@@ -166,30 +174,8 @@ export function AdmShell(props: { children: React.ReactNode }) {
     }
   }
 
-  React.useEffect(() => {
-    loadContext()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  React.useEffect(() => {
-    if (!empresaId) return
-    loadEnabledModules(empresaId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empresaId])
-
-  function onChangeEmpresaId(next: string) {
-    setEmpresaId(next)
-    setEmpresaIdToStorage(next)
-  }
-
-  /**
-   * ✅ MENU DINÂMICO (limpo e previsível)
-   * - Só aparece se:
-   *    enabled (DB) + implemented (código) + rota no registry
-   * - Ordena: Core primeiro, depois label
-   */
-  const menuItems = React.useMemo(() => {
-    const allowedKeys = enabledKeys.filter((k) => {
+  function buildMenu(keys: ModuleKey[]): NavItem[] {
+    const allowedKeys = keys.filter((k) => {
       if (k === "core") return true
       if (!MODULES[k]?.implemented) return false
       if (!ROUTES_BY_MODULE[k]) return false
@@ -206,8 +192,50 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
     return sortedKeys
       .map((k) => ROUTES_BY_MODULE[k])
-      .filter(Boolean) as Array<{ href: string; label: string }>
+      .filter(Boolean) as NavItem[]
+  }
+
+  React.useEffect(() => {
+    loadContext()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  React.useEffect(() => {
+    if (!empresaId) return
+    loadEnabledModules(empresaId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresaId])
+
+  // sempre que enabledKeys muda, reconstrói menu (sem apagar menu durante loading)
+  React.useEffect(() => {
+    const next = buildMenu(enabledKeys)
+    // evita update desnecessário (menos flicker)
+    const same =
+      next.length === menuItems.length &&
+      next.every((x, i) => x.href === menuItems[i]?.href && x.label === menuItems[i]?.label)
+
+    if (!same) setMenuItems(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabledKeys])
+
+  // ✅ escuta mudanças disparadas pela página de módulos (refresh imediato do header)
+  React.useEffect(() => {
+    const onModulesChanged = (ev: Event) => {
+      const detail = (ev as CustomEvent)?.detail as { empresa_id?: string } | undefined
+      const eid = detail?.empresa_id ?? empresaId
+      if (!eid) return
+      loadEnabledModules(eid)
+    }
+
+    window.addEventListener("moduz:modules-changed", onModulesChanged as any)
+    return () => window.removeEventListener("moduz:modules-changed", onModulesChanged as any)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresaId])
+
+  function onChangeEmpresaId(next: string) {
+    setEmpresaId(next)
+    setEmpresaIdToStorage(next)
+  }
 
   const headerSubtitle = React.useMemo(() => {
     if (!empresaId) return "Sem empresa ativa"
@@ -262,22 +290,23 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
         <div className="mx-auto max-w-6xl px-4 pb-4">
           <nav className="flex flex-wrap items-center gap-2">
+            {menuItems.map((it) => (
+              <a
+                key={it.href}
+                href={it.href}
+                className={classNames(
+                  "rounded-md border px-3 py-1.5 text-sm",
+                  "border-slate-900 bg-slate-950 text-slate-200 hover:bg-slate-900",
+                  modulesLoading ? "opacity-90" : ""
+                )}
+              >
+                {it.label}
+              </a>
+            ))}
+
             {modulesLoading ? (
-              <span className="text-xs text-slate-500">A carregar…</span>
-            ) : (
-              menuItems.map((it) => (
-                <a
-                  key={it.href}
-                  href={it.href}
-                  className={classNames(
-                    "rounded-md border px-3 py-1.5 text-sm",
-                    "border-slate-900 bg-slate-950 text-slate-200 hover:bg-slate-900"
-                  )}
-                >
-                  {it.label}
-                </a>
-              ))
-            )}
+              <span className="ml-2 text-xs text-slate-500">a atualizar…</span>
+            ) : null}
           </nav>
         </div>
       </header>
