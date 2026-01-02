@@ -3,13 +3,13 @@
  * Moduz+ | Gestão de Módulos
  * Arquivo: app/adm/core/modulos/page.tsx
  * Módulo: Core
- * Etapa: UI List + Toggle (v3 - responsivo)
+ * Etapa: UI List + Toggle (v3.1)
  * Descrição:
  *  - Lista módulos por empresa
  *  - Toggle com feedback, loading e tratamento de erro
  *  - Regra Moduz: não permite ativar módulos não implementados (badge "Em breve")
  *  - Responsivo: cards no mobile, tabela no desktop (evita sobreposição)
- *  - Sem “Notas” (regras ficam no texto + toasts/tooltips)
+ *  - Dispara evento global "moduz:modules-changed" para atualizar o header/menu em tempo real
  * =============================================
  */
 
@@ -47,6 +47,14 @@ function getEmpresaId(): string | null {
   }
 }
 
+function notifyModulesChanged(empresaId: string) {
+  try {
+    window.dispatchEvent(new CustomEvent("moduz:modules-changed", { detail: { empresa_id: empresaId } }))
+  } catch {
+    // ignore
+  }
+}
+
 function formatDt(v: string | null) {
   if (!v) return "—"
   try {
@@ -71,7 +79,7 @@ export default function ModulosPage() {
     return MODULE_ORDER.map((k) => map.get(k)).filter(Boolean) as ModuleRow[]
   }, [rows])
 
-  async function load() {
+  async function load(andNotify = true) {
     setLoading(true)
     setErr(null)
 
@@ -81,7 +89,7 @@ export default function ModulosPage() {
 
       if (!eid) {
         setRows([])
-        setErr("Selecione uma empresa no topo do Admin para gerir os módulos.")
+        setErr("EMPRESA_ID_AUSENTE: contexto não definiu empresa ativa.")
         return
       }
 
@@ -96,8 +104,8 @@ export default function ModulosPage() {
       if (!r.ok) {
         const msg =
           (j as any)?.error
-            ? `Não foi possível carregar os módulos.${(j as any).details ? ` (${(j as any).details})` : ""}`
-            : "Não foi possível carregar os módulos."
+            ? `${(j as any).error}${(j as any).details ? `: ${(j as any).details}` : ""}`
+            : "Falha ao carregar."
         setErr(msg)
         setRows([])
         return
@@ -105,6 +113,9 @@ export default function ModulosPage() {
 
       const data = j as ListResponse
       setRows(Array.isArray(data.modules) ? data.modules : [])
+
+      // ✅ informa o header/menu que módulos podem ter mudado
+      if (andNotify) notifyModulesChanged(eid)
     } catch (e: any) {
       setErr(e?.message || "Erro inesperado ao carregar.")
       setRows([])
@@ -115,21 +126,21 @@ export default function ModulosPage() {
 
   async function toggle(module_key: string, enabled: boolean) {
     if (!empresaId) {
-      setToast({ kind: "err", msg: "Selecione uma empresa para continuar." })
+      setToast({ kind: "err", msg: "Empresa não definida." })
       return
     }
 
-    const meta = MODULES[module_key]
+    const meta = (MODULES as any)[module_key]
     const locked = Boolean(meta?.locked)
     const implemented = Boolean(meta?.implemented)
 
     if (locked) {
-      setToast({ kind: "err", msg: "O módulo Core é obrigatório e não pode ser desativado." })
+      setToast({ kind: "err", msg: "O módulo Core não pode ser desativado." })
       return
     }
 
     if (!implemented) {
-      setToast({ kind: "err", msg: "Este módulo ainda não está disponível (Em breve)." })
+      setToast({ kind: "err", msg: "Módulo ainda não disponível (Em breve)." })
       return
     }
 
@@ -156,7 +167,10 @@ export default function ModulosPage() {
 
       if ("ok" in j && j.ok === true) {
         setRows((prev) => prev.map((x) => (x.module_key === module_key ? j.module : x)))
-        setToast({ kind: "ok", msg: "Módulo atualizado." })
+        setToast({ kind: "ok", msg: `Módulo "${module_key}" atualizado.` })
+
+        // ✅ header atualiza na hora
+        notifyModulesChanged(empresaId)
         return
       }
 
@@ -173,7 +187,7 @@ export default function ModulosPage() {
   }
 
   useEffect(() => {
-    load()
+    load(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -189,12 +203,12 @@ export default function ModulosPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-50">Gestão de Módulos</h1>
           <p className="mt-2 text-sm text-slate-400">
-            Ative/desative módulos por empresa. O Core é obrigatório. Módulos “Em breve” não podem ser ativados.
+            Ative/desative módulos por empresa. Core é obrigatório. Módulos “Em breve” não podem ser ativados.
           </p>
         </div>
 
         <button
-          onClick={load}
+          onClick={() => load(true)}
           className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 hover:bg-slate-900"
         >
           Atualizar
@@ -232,7 +246,7 @@ export default function ModulosPage() {
           </div>
         ) : (
           sortedRows.map((m) => {
-            const meta = MODULES[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
+            const meta = (MODULES as any)[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
             const isBusy = busyKey === m.module_key
             const locked = Boolean(meta.locked)
             const implemented = Boolean(meta.implemented)
@@ -245,14 +259,17 @@ export default function ModulosPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
                       <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
+
                       <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
                       </span>
+
                       {locked ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           obrigatório
                         </span>
                       ) : null}
+
                       {!implemented ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           em breve
@@ -261,7 +278,11 @@ export default function ModulosPage() {
                     </div>
 
                     <p className="mt-2 text-sm text-slate-400">{meta.desc}</p>
-                    <p className="mt-2 text-xs text-slate-500 font-mono">Atualizado: {formatDt(m.updated_at)}</p>
+
+                    <p className="mt-2 text-xs text-slate-500 font-mono">
+                      Atualizado: {formatDt(m.updated_at)}
+                    </p>
+
                     {isBusy ? <p className="mt-2 text-xs text-slate-500">a atualizar…</p> : null}
                   </div>
 
@@ -306,36 +327,44 @@ export default function ModulosPage() {
         ) : (
           <ul>
             {sortedRows.map((m) => {
-              const meta = MODULES[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
+              const meta = (MODULES as any)[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
               const isBusy = busyKey === m.module_key
               const locked = Boolean(meta.locked)
               const implemented = Boolean(meta.implemented)
               const disableToggle = locked || isBusy || !implemented
 
               return (
-                <li key={m.module_key} className="grid grid-cols-12 gap-0 px-4 py-4 border-b border-slate-900 last:border-b-0">
+                <li
+                  key={m.module_key}
+                  className="grid grid-cols-12 gap-0 px-4 py-4 border-b border-slate-900 last:border-b-0"
+                >
                   <div className="col-span-5">
                     <div className="flex items-center gap-2">
                       <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
                       <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
+
                       <span className="ml-2 rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
                       </span>
+
                       {locked ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           obrigatório
                         </span>
                       ) : null}
+
                       {!implemented ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           em breve
                         </span>
                       ) : null}
+
                       {isBusy ? <span className="text-[11px] text-slate-400">a atualizar…</span> : null}
                     </div>
                   </div>
 
                   <div className="col-span-4 text-sm text-slate-400">{meta.desc}</div>
+
                   <div className="col-span-2 text-xs text-slate-400 font-mono">{formatDt(m.updated_at)}</div>
 
                   <div className="col-span-1 flex justify-end">
