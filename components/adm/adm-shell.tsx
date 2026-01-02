@@ -31,9 +31,9 @@ import {
 import { MODULES, ROUTES_BY_MODULE, type ModuleKey } from "./module-registry"
 import { usePathname } from "next/navigation"
 
-// ✅ Toast global (provider + overlay)
 import { ToastProvider } from "../ui/toast-context"
 import { ToastHost } from "../ui/toast-host"
+import { ModuleGuard } from "./module-guard"
 
 type CoreContextResponse =
   | {
@@ -318,7 +318,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
   )
 
   return (
-    // ✅ ToastProvider envolve tudo (sem mexer em mais nada)
     <ToastProvider>
       <div className="min-h-screen bg-black text-slate-100">
         <header className="sticky top-0 z-20 border-b border-slate-900 bg-black/70 backdrop-blur">
@@ -399,9 +398,12 @@ export function AdmShell(props: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+        <main className="mx-auto max-w-6xl px-4 py-6">
+          <ModuleGuard empresaId={empresaId} enabledKeys={enabledKeys}>
+            {children}
+          </ModuleGuard>
+        </main>
 
-        {/* ✅ Toast overlay (não empurra layout) */}
         <ToastHost />
       </div>
     </ToastProvider>
