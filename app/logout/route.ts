@@ -3,21 +3,24 @@
  * Moduz+ | Logout Alias
  * Arquivo: app/logout/route.ts
  * Módulo: Core (Auth)
- * Etapa: Alias (v1)
+ * Etapa: Alias (v1.1)
  * Descrição:
  *  - Compatibilidade: /logout → /auth/logout
- *  - Evita 405 quando algum link antigo apontar para /logout
+ *  - Usa origin do request (sem localhost)
  * =============================================
  */
 
 import { NextResponse } from "next/server"
 
+function redirectToAuthLogout(req: Request) {
+  const origin = new URL(req.url).origin
+  return NextResponse.redirect(new URL("/auth/logout", origin))
+}
+
 export async function GET(req: Request) {
-  const url = new URL("/auth/logout", req.url)
-  return NextResponse.redirect(url)
+  return redirectToAuthLogout(req)
 }
 
 export async function POST(req: Request) {
-  const url = new URL("/auth/logout", req.url)
-  return NextResponse.redirect(url)
+  return redirectToAuthLogout(req)
 }
