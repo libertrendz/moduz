@@ -3,7 +3,7 @@
  * Moduz+ | Gestão de Módulos
  * Arquivo: app/adm/core/modulos/page.tsx
  * Módulo: Core
- * Etapa: UI List + Toggle (v3.3)
+ * Etapa: UI List + Toggle (v3.5)
  * Descrição:
  *  - Lista módulos por empresa
  *  - Toggle com feedback, loading e tratamento de erro
@@ -11,8 +11,8 @@
  *  - Responsivo: cards no mobile, tabela no desktop (evita sobreposição)
  *  - Auto-sync:
  *      - recarrega quando trocar empresa ("moduz:empresa-changed")
- *      - atualiza header via "moduz:modules-updated"
- *  - Toast flutuante (não empurra layout)
+ *      - emite "moduz:modules-updated" para atualizar header/menu instantaneamente
+ *  - Toast Global (via AdmShell) — não empurra layout
  * =============================================
  */
 
@@ -20,6 +20,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { MODULES, MODULE_ORDER } from "../../../../components/adm/module-registry"
+import { useToast } from "../../../../components/ui/toast-context"
 
 type ModuleRow = {
   module_key: string
@@ -72,6 +73,8 @@ function emitModulesUpdated(empresaId: string, enabledKeys: string[]) {
 }
 
 export default function ModulosPage() {
+  const { showToast } = useToast()
+
   const [empresaId, setEmpresaId] = useState<string | null>(null)
 
   const [loading, setLoading] = useState(true)
@@ -79,7 +82,6 @@ export default function ModulosPage() {
   const [err, setErr] = useState<string | null>(null)
 
   const [busyKey, setBusyKey] = useState<string | null>(null)
-  const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null)
 
   const sortedRows = useMemo(() => {
     const map = new Map(rows.map((r) => [r.module_key, r]))
@@ -138,7 +140,7 @@ export default function ModulosPage() {
 
   async function toggle(module_key: string, enabled: boolean) {
     if (!empresaId) {
-      setToast({ kind: "err", msg: "Empresa não definida." })
+      showToast({ kind: "err", msg: "Empresa não definida." })
       return
     }
 
@@ -147,18 +149,18 @@ export default function ModulosPage() {
     const implemented = Boolean(meta?.implemented)
 
     if (locked) {
-      setToast({ kind: "err", msg: "O módulo Core não pode ser desativado." })
+      showToast({ kind: "err", msg: "O módulo Core não pode ser desativado." })
       return
     }
 
     if (!implemented) {
-      setToast({ kind: "err", msg: "Módulo ainda não disponível (Em breve)." })
+      showToast({ kind: "info", msg: "Módulo ainda não disponível (Em breve)." })
       return
     }
 
     setBusyKey(module_key)
-    setToast(null)
 
+    // otimista + sync header
     setRows((prev) => {
       const next = prev.map((r) => (r.module_key === module_key ? { ...r, enabled } : r))
       syncHeaderFrom(next, empresaId)
@@ -186,18 +188,23 @@ export default function ModulosPage() {
           syncHeaderFrom(next, empresaId)
           return next
         })
-        setToast({ kind: "ok", msg: `Módulo "${module_key}" atualizado.` })
+
+        showToast({ kind: "ok", msg: `Módulo "${module_key}" atualizado.` })
         return
       }
 
       throw new Error((j as any)?.error || "Falha ao atualizar módulo.")
     } catch (e: any) {
+      // rollback + sync header
       setRows((prev) => {
-        const next = prev.map((r) => (r.module_key === module_key ? { ...r, enabled: !enabled } : r))
+        const next = prev.map((r) =>
+          r.module_key === module_key ? { ...r, enabled: !enabled } : r
+        )
         syncHeaderFrom(next, empresaId)
         return next
       })
-      setToast({ kind: "err", msg: e?.message || "Erro inesperado." })
+
+      showToast({ kind: "err", msg: e?.message || "Erro inesperado." })
     } finally {
       setBusyKey(null)
     }
@@ -208,6 +215,7 @@ export default function ModulosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // auto-reload ao trocar empresa no switcher
   useEffect(() => {
     const onEmpresaChanged = (ev: Event) => {
       const detail = (ev as CustomEvent)?.detail as { empresa_id?: string } | undefined
@@ -221,30 +229,8 @@ export default function ModulosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => {
-    if (!toast) return
-    const t = window.setTimeout(() => setToast(null), 2400)
-    return () => window.clearTimeout(t)
-  }, [toast])
-
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
-      {/* TOAST flutuante */}
-      {toast ? (
-        <div className="fixed top-4 right-4 z-50 max-w-[92vw] md:max-w-sm">
-          <div
-            className={classNames(
-              "rounded-lg border px-3 py-2 text-sm shadow-lg backdrop-blur",
-              toast.kind === "ok"
-                ? "border-emerald-900/60 bg-emerald-950/80 text-emerald-200"
-                : "border-red-900/60 bg-red-950/80 text-red-200"
-            )}
-          >
-            {toast.msg}
-          </div>
-        </div>
-      ) : null}
-
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-50">Gestão de Módulos</h1>
@@ -267,7 +253,7 @@ export default function ModulosPage() {
         </div>
       ) : null}
 
-      {/* MOBILE: cards */}
+      {/* MOBILE: cards (evita sobreposição) */}
       <div className="mt-6 space-y-3 md:hidden">
         {loading ? (
           <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-400">
@@ -279,10 +265,16 @@ export default function ModulosPage() {
           </div>
         ) : (
           sortedRows.map((m) => {
-            const meta = MODULES[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
+            const meta = MODULES[m.module_key] ?? {
+              title: m.module_key,
+              desc: "—",
+              implemented: false,
+            }
+
             const isBusy = busyKey === m.module_key
             const locked = Boolean(meta.locked)
             const implemented = Boolean(meta.implemented)
+
             const disableToggle = locked || isBusy || !implemented
 
             return (
@@ -292,17 +284,14 @@ export default function ModulosPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
                       <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
-
                       <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
                       </span>
-
                       {locked ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           obrigatório
                         </span>
                       ) : null}
-
                       {!implemented ? (
                         <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           em breve
@@ -311,7 +300,11 @@ export default function ModulosPage() {
                     </div>
 
                     <p className="mt-2 text-sm text-slate-400">{meta.desc}</p>
-                    <p className="mt-2 text-xs text-slate-500 font-mono">Atualizado: {formatDt(m.updated_at)}</p>
+
+                    <p className="mt-2 text-xs text-slate-500 font-mono">
+                      Atualizado: {formatDt(m.updated_at)}
+                    </p>
+
                     {isBusy ? <p className="mt-2 text-xs text-slate-500">a atualizar…</p> : null}
                   </div>
 
@@ -356,14 +349,23 @@ export default function ModulosPage() {
         ) : (
           <ul>
             {sortedRows.map((m) => {
-              const meta = MODULES[m.module_key] ?? { title: m.module_key, desc: "—", implemented: false }
+              const meta = MODULES[m.module_key] ?? {
+                title: m.module_key,
+                desc: "—",
+                implemented: false,
+              }
+
               const isBusy = busyKey === m.module_key
               const locked = Boolean(meta.locked)
               const implemented = Boolean(meta.implemented)
+
               const disableToggle = locked || isBusy || !implemented
 
               return (
-                <li key={m.module_key} className="grid grid-cols-12 gap-0 px-4 py-4 border-b border-slate-900 last:border-b-0">
+                <li
+                  key={m.module_key}
+                  className="grid grid-cols-12 gap-0 px-4 py-4 border-b border-slate-900 last:border-b-0"
+                >
                   <div className="col-span-5">
                     <div className="flex items-center gap-2">
                       <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
@@ -390,7 +392,10 @@ export default function ModulosPage() {
                   </div>
 
                   <div className="col-span-4 text-sm text-slate-400">{meta.desc}</div>
-                  <div className="col-span-2 text-xs text-slate-400 font-mono">{formatDt(m.updated_at)}</div>
+
+                  <div className="col-span-2 text-xs text-slate-400 font-mono">
+                    {formatDt(m.updated_at)}
+                  </div>
 
                   <div className="col-span-1 flex justify-end">
                     <button
