@@ -1,29 +1,27 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
+/**
+ * =============================================
+ * Moduz+ | Logout Alias (API)
+ * Arquivo: app/api/auth/logout/route.ts
+ * Módulo: Core (Auth)
+ * Etapa: Compat (v1)
+ * Descrição:
+ *  - Alias histórico
+ *  - NÃO faz signOut aqui (evita comportamentos divergentes)
+ *  - Redirecciona sempre para /auth/logout
+ * =============================================
+ */
 
-function env(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
+import { NextResponse } from "next/server"
+
+function redirect(req: Request) {
+  const origin = new URL(req.url).origin
+  return NextResponse.redirect(new URL("/auth/logout", origin))
 }
 
-export async function POST(req: NextRequest) {
-  let res = NextResponse.json({ ok: true }, { status: 200 });
+export async function GET(req: Request) {
+  return redirect(req)
+}
 
-  const supabase = createServerClient(env("NEXT_PUBLIC_SUPABASE_URL"), env("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
-    cookies: {
-      get(name: string) {
-        return req.cookies.get(name)?.value;
-      },
-      set(name: string, value: string, options: any) {
-        res.cookies.set({ name, value, ...options });
-      },
-      remove(name: string, options: any) {
-        res.cookies.set({ name, value: "", ...options, maxAge: 0 });
-      },
-    },
-  });
-
-  await supabase.auth.signOut();
-  return res;
+export async function POST(req: Request) {
+  return redirect(req)
 }
