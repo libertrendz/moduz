@@ -379,8 +379,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
               </div>
 
               {/* Mobile subtitle (fica na 2ª linha, mas só aparece se houver espaço; se quiseres sempre, diz) */}
-              <span className="w-full md:hidden text-xs text-slate-500">{headerSubtitle}</span>
-            </div>
+              </div>
           </div>
 
           <div className="mx-auto max-w-6xl px-4 pb-4">
