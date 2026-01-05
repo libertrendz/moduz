@@ -3,7 +3,7 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu Dinâmico (v6.3)
+ * Etapa: Layout + Menu Dinâmico (v6.4)
  * Descrição:
  *  - Contexto SSR via cookies (/api/admin/core/context)
  *  - Empresa ativa via localStorage (moduz_empresa_id)
@@ -15,7 +15,9 @@
  *      - escuta "moduz:modules-updated" (toggle/list) para atualizar menu instantaneamente
  *  - Cache localStorage por empresa (evita “a atualizar…” no reload)
  *  - Evita “piscadas”: mantém menu atual durante refresh
- *  - Header global inclui Logout (/auth/logout)
+ *  - Header global inclui:
+ *      - Sair (local) em /auth/logout
+ *      - Sair de todas (global) em /auth/logout-all
  * =============================================
  */
 
@@ -149,7 +151,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
   const [modulesLoading, setModulesLoading] = React.useState(false)
   const [enabledKeys, setEnabledKeys] = React.useState<ModuleKey[]>(CORE_ONLY)
 
-  // mantém menu anterior enquanto atualiza
   const [menuItems, setMenuItems] = React.useState<NavItem[]>([{ href: "/adm", label: "Core" }])
 
   const [logoOk, setLogoOk] = React.useState(true)
@@ -229,7 +230,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
       })
 
       const j = safeJson<ModulesListResponse>(await r.json().catch(() => null))
-
       if (!r.ok || !j || "error" in j) return
 
       const enabled = (j.modules ?? [])
@@ -258,7 +258,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresaId])
 
-  // escuta toggle/list da página de módulos (atualiza menu imediatamente)
   React.useEffect(() => {
     const onUpdated = (ev: Event) => {
       const detail = (ev as CustomEvent)?.detail as
@@ -287,7 +286,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
     setEmpresaId(next)
     setEmpresaIdToStorage(next)
 
-    // aplica cache imediatamente (se existir)
     const cached = getEnabledModulesCache(next)
     const keys: ModuleKey[] = cached?.length
       ? Array.from(new Set<ModuleKey>(["core", ...cached]))
@@ -295,8 +293,6 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
     setEnabledKeys(keys)
     setMenuItems(buildMenu(keys))
-
-    // avisa páginas (ex.: /adm/core/modulos) para recarregarem sem botão "Atualizar"
     emitEmpresaChanged(next)
   }
 
@@ -321,56 +317,91 @@ export function AdmShell(props: { children: React.ReactNode }) {
     <ToastProvider>
       <div className="min-h-screen bg-black text-slate-100">
         <header className="sticky top-0 z-20 border-b border-slate-900 bg-black/70 backdrop-blur">
-          <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-4">
-            <div className="flex items-center gap-3 shrink-0">
-              <a href="/adm" className="flex items-center gap-3">
-                {logoOk ? (
-                  <img
-                    src="/brand/moduzplus-wordmark-ret.png"
-                    alt="Moduz+"
-                    className="h-12 w-auto max-w-[140px] md:max-w-none md:h-14 shrink-0 object-contain"
-                    onError={() => setLogoOk(false)}
-                  />
+          <div className="mx-auto max-w-6xl px-4 py-4">
+            {/* ROW 1 (mobile): logo + actions. ROW 2: switcher + módulos. */}
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              {/* Linha do Logo */}
+              <div className="flex items-center justify-between gap-3">
+                <a href="/adm" className="flex items-center gap-3 min-w-0">
+                  {logoOk ? (
+                    <img
+                      src="/brand/moduzplus-wordmark-ret.png"
+                      alt="Moduz+"
+                      className="h-12 w-auto md:h-14 shrink-0 object-contain"
+                      onError={() => setLogoOk(false)}
+                    />
+                  ) : (
+                    <span className="text-base font-semibold tracking-wide">Moduz+</span>
+                  )}
+                </a>
+
+                {/* Ações no mobile (não espreme logo) */}
+                <div className="flex items-center gap-2 md:hidden">
+                  <a
+                    href="/auth/logout"
+                    className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
+                    title="Sair deste dispositivo"
+                  >
+                    Sair
+                  </a>
+                  <a
+                    href="/auth/logout-all"
+                    className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
+                    title="Sair de todas as sessões"
+                  >
+                    Sair tudo
+                  </a>
+                </div>
+              </div>
+
+              {/* Subtitle só desktop */}
+              <div className="hidden md:block text-xs text-slate-500">{headerSubtitle}</div>
+
+              {/* Controles (desktop) / Linha 2 (mobile) */}
+              <div className="flex flex-wrap items-center gap-2 md:gap-3">
+                {loading ? (
+                  <span className="text-xs text-slate-500">A carregar…</span>
+                ) : err ? (
+                  <span className="text-xs text-red-300">{err}</span>
                 ) : (
-                  <span className="text-base font-semibold tracking-wide">Moduz+</span>
+                  <EmpresaSwitcher
+                    empresas={empresas}
+                    activeEmpresaId={empresaId}
+                    onChangeEmpresaId={onChangeEmpresaId}
+                  />
                 )}
-              </a>
-              <span className="hidden md:inline text-xs text-slate-500">{headerSubtitle}</span>
-            </div>
 
-            <div className="flex items-center gap-2 md:gap-3">
-              {loading ? (
-                <span className="text-xs text-slate-500">A carregar…</span>
-              ) : err ? (
-                <span className="text-xs text-red-300">{err}</span>
-              ) : (
-                <EmpresaSwitcher
-                  empresas={empresas}
-                  activeEmpresaId={empresaId}
-                  onChangeEmpresaId={onChangeEmpresaId}
-                />
-              )}
+                <a
+                  href="/adm/core/modulos"
+                  className={classNames(
+                    "rounded-md border px-3 py-2 text-xs transition",
+                    isActive("/adm/core/modulos")
+                      ? "border-slate-700 bg-slate-900 text-slate-50"
+                      : "border-slate-800 bg-slate-950 text-slate-200 hover:bg-slate-900"
+                  )}
+                  title="Gestão de Módulos"
+                >
+                  Módulos
+                </a>
 
-              <a
-                href="/adm/core/modulos"
-                className={classNames(
-                  "rounded-md border px-3 py-2 text-xs transition",
-                  isActive("/adm/core/modulos")
-                    ? "border-slate-700 bg-slate-900 text-slate-50"
-                    : "border-slate-800 bg-slate-950 text-slate-200 hover:bg-slate-900"
-                )}
-                title="Gestão de Módulos"
-              >
-                Módulos
-              </a>
-
-              <a
-                href="/auth/logout"
-                className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
-                title="Sair"
-              >
-                Sair
-              </a>
+                {/* Ações desktop */}
+                <div className="hidden md:flex items-center gap-2">
+                  <a
+                    href="/auth/logout"
+                    className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
+                    title="Sair deste dispositivo"
+                  >
+                    Sair
+                  </a>
+                  <a
+                    href="/auth/logout-all"
+                    className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
+                    title="Sair de todas as sessões"
+                  >
+                    Sair de todas
+                  </a>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -391,9 +422,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 </a>
               ))}
 
-              {modulesLoading ? (
-                <span className="ml-2 text-xs text-slate-500">a atualizar…</span>
-              ) : null}
+              {modulesLoading ? <span className="ml-2 text-xs text-slate-500">a atualizar…</span> : null}
             </nav>
           </div>
         </header>
