@@ -321,14 +321,14 @@ export function AdmShell(props: { children: React.ReactNode }) {
     <ToastProvider>
       <div className="min-h-screen bg-black text-slate-100">
         <header className="sticky top-0 z-20 border-b border-slate-900 bg-black/70 backdrop-blur">
-          <div className="mx-auto flex max-w-6xl items-centerflex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-4">
+          <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-4">
             <div className="flex items-center gap-3 shrink-0">
               <a href="/adm" className="flex items-center gap-3">
                 {logoOk ? (
                   <img
                     src="/brand/moduzplus-wordmark-ret.png"
                     alt="Moduz+"
-                    className="h-12 w-auto md:h-14 shrink-0 object-contain"
+                    className="h-12 w-auto max-w-[140px] md:max-w-none md:h-14 shrink-0 object-contain"
                     onError={() => setLogoOk(false)}
                   />
                 ) : (
