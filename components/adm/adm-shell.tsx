@@ -3,10 +3,12 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu Dinâmico (v6.3.1)
+ * Etapa: Layout + Menu Dinâmico (v6.3.2)
  * Descrição:
  *  - Mantém lógica existente (sem mudanças transversais)
- *  - Ajuste pontual: header mobile em 2 linhas (evita espremer logotipo)
+ *  - Ajuste pontual: header mobile em 2 linhas:
+ *      linha 1: logo (+ subtítulo no desktop)
+ *      linha 2: dropdown + botões na MESMA linha (com wrap controlado)
  * =============================================
  */
 
@@ -307,15 +309,16 @@ export function AdmShell(props: { children: React.ReactNode }) {
     <ToastProvider>
       <div className="min-h-screen bg-black text-slate-100">
         <header className="sticky top-0 z-20 border-b border-slate-900 bg-black/70 backdrop-blur">
-          {/* MOBILE: 2 linhas fixas */}
+          {/* Header: 2 linhas no mobile, 1 linha no desktop */}
           <div className="mx-auto max-w-6xl px-4 py-4">
+            {/* Linha 1 */}
             <div className="flex items-center justify-between gap-3">
-              <a href="/adm" className="flex items-center gap-3">
+              <a href="/adm" className="flex items-center gap-3 shrink-0">
                 {logoOk ? (
                   <img
                     src="/brand/moduzplus-wordmark-ret.png"
                     alt="Moduz+"
-                    className="h-12 w-auto md:h-14 shrink-0"
+                    className="h-12 w-auto md:h-14 shrink-0 object-contain"
                     onError={() => setLogoOk(false)}
                   />
                 ) : (
@@ -323,12 +326,13 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 )}
               </a>
 
-              {/* Desktop subtitle apenas */}
+              {/* Desktop subtitle */}
               <span className="hidden md:inline text-xs text-slate-500">{headerSubtitle}</span>
             </div>
 
-            <div className="mt-3 flex flex-col gap-2 md:mt-0 md:flex-row md:items-center md:justify-end md:gap-3">
-              <div className="flex items-center gap-2 md:gap-3">
+            {/* Linha 2 (mobile): dropdown + botões na mesma linha */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 md:mt-0 md:flex-nowrap md:justify-end md:gap-3">
+              <div className="flex-1 min-w-[220px] md:flex-none">
                 {loading ? (
                   <span className="text-xs text-slate-500">A carregar…</span>
                 ) : err ? (
@@ -342,7 +346,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <a
                   href="/adm/core/modulos"
                   className={classNames(
@@ -365,8 +369,8 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 </a>
               </div>
 
-              {/* Mobile subtitle (abaixo) */}
-              <span className="md:hidden text-xs text-slate-500">{headerSubtitle}</span>
+              {/* Mobile subtitle (fica na 2ª linha, mas só aparece se houver espaço; se quiseres sempre, diz) */}
+              <span className="w-full md:hidden text-xs text-slate-500">{headerSubtitle}</span>
             </div>
           </div>
 
@@ -387,9 +391,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 </a>
               ))}
 
-              {modulesLoading ? (
-                <span className="ml-2 text-xs text-slate-500">a actualizar…</span>
-              ) : null}
+              {modulesLoading ? <span className="ml-2 text-xs text-slate-500">a actualizar…</span> : null}
             </nav>
           </div>
         </header>
