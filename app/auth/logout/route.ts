@@ -3,12 +3,12 @@
  * Moduz+ | Logout Route
  * Arquivo: app/auth/logout/route.ts
  * Módulo: Core (Auth)
- * Etapa: Logout SSR (v1.4 - local)
+ * Etapa: Logout SSR (v1.4 - local/global)
  * Descrição:
- *  - Encerra sessão Supabase (cookies) SEM derrubar outras sessões do mesmo utilizador
- *  - Usa scope "local" (evita cross-device logout)
- *  - Suporta GET e POST
- *  - Redireciona para /login usando a origin do request (sem localhost)
+ *  - Logout por cookies (SSR)
+ *  - Por defeito: LOCAL (não derruba outras sessões)
+ *  - Opcional: GLOBAL com ?all=1
+ *  - Redirecciona para /login usando a origin do request (sem localhost)
  * =============================================
  */
 
@@ -24,7 +24,6 @@ function env(name: string): string {
 
 function supabaseServer() {
   const cookieStore = cookies()
-
   return createServerClient(env("NEXT_PUBLIC_SUPABASE_URL"), env("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
     cookies: {
       get(name: string) {
@@ -41,16 +40,21 @@ function supabaseServer() {
 }
 
 async function handler(req: Request) {
+  const url = new URL(req.url)
+  const origin = url.origin
+
+  // por defeito: LOCAL (não afecta outras sessões)
+  const all = url.searchParams.get("all") === "1"
+  const scope = all ? ("global" as const) : ("local" as const)
+
   try {
     const supabase = supabaseServer()
-
-    // ✅ CRÍTICO: local por defeito (não revoga sessões noutros devices)
-    await supabase.auth.signOut({ scope: "local" })
+    // IMPORTANTE: scope explícito
+    await supabase.auth.signOut({ scope })
   } catch {
     // Mesmo se falhar, seguimos com redirect (não travar logout)
   }
 
-  const origin = new URL(req.url).origin
   return NextResponse.redirect(new URL("/login", origin))
 }
 
