@@ -321,7 +321,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
     <ToastProvider>
       <div className="min-h-screen bg-black text-slate-100">
         <header className="sticky top-0 z-20 border-b border-slate-900 bg-black/70 backdrop-blur">
-          <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
+          <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-4">
             <div className="flex items-center gap-3">
               <a href="/adm" className="flex items-center gap-3">
                 {logoOk ? (
