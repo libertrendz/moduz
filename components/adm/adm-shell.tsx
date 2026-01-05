@@ -3,21 +3,10 @@
  * Moduz+ | Admin Shell
  * Arquivo: components/adm/adm-shell.tsx
  * Módulo: Core (Admin)
- * Etapa: Layout + Menu Dinâmico (v6.4)
+ * Etapa: Layout + Menu Dinâmico (v6.3.1)
  * Descrição:
- *  - Contexto SSR via cookies (/api/admin/core/context)
- *  - Empresa ativa via localStorage (moduz_empresa_id)
- *  - Menu dinâmico:
- *      - Core sempre
- *      - demais: somente se (enabled no DB) E (implemented no código) E (tem rota no registry)
- *  - Sincronização global:
- *      - emite "moduz:empresa-changed" quando troca empresa
- *      - escuta "moduz:modules-updated" (toggle/list) para atualizar menu instantaneamente
- *  - Cache localStorage por empresa (evita “a atualizar…” no reload)
- *  - Evita “piscadas”: mantém menu atual durante refresh
- *  - Header global inclui:
- *      - Sair (local) em /auth/logout
- *      - Sair de todas (global) em /auth/logout-all
+ *  - Mantém lógica existente (sem mudanças transversais)
+ *  - Ajuste pontual: header mobile em 2 linhas (evita espremer logotipo)
  * =============================================
  */
 
@@ -293,11 +282,12 @@ export function AdmShell(props: { children: React.ReactNode }) {
 
     setEnabledKeys(keys)
     setMenuItems(buildMenu(keys))
+
     emitEmpresaChanged(next)
   }
 
   const headerSubtitle = React.useMemo(() => {
-    if (!empresaId) return "Sem empresa ativa"
+    if (!empresaId) return "Sem empresa activa"
     const current = empresas.find((e) => e.empresa_id === empresaId)
     const nome = current?.empresa_nome ?? null
     const role = current?.role ?? null
@@ -317,48 +307,28 @@ export function AdmShell(props: { children: React.ReactNode }) {
     <ToastProvider>
       <div className="min-h-screen bg-black text-slate-100">
         <header className="sticky top-0 z-20 border-b border-slate-900 bg-black/70 backdrop-blur">
+          {/* MOBILE: 2 linhas fixas */}
           <div className="mx-auto max-w-6xl px-4 py-4">
-            {/* ROW 1 (mobile): logo + actions. ROW 2: switcher + módulos. */}
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              {/* Linha do Logo */}
-              <div className="flex items-center justify-between gap-3">
-                <a href="/adm" className="flex items-center gap-3 min-w-0">
-                  {logoOk ? (
-                    <img
-                      src="/brand/moduzplus-wordmark-ret.png"
-                      alt="Moduz+"
-                      className="h-12 w-auto md:h-14 shrink-0 object-contain"
-                      onError={() => setLogoOk(false)}
-                    />
-                  ) : (
-                    <span className="text-base font-semibold tracking-wide">Moduz+</span>
-                  )}
-                </a>
+            <div className="flex items-center justify-between gap-3">
+              <a href="/adm" className="flex items-center gap-3">
+                {logoOk ? (
+                  <img
+                    src="/brand/moduzplus-wordmark-ret.png"
+                    alt="Moduz+"
+                    className="h-12 w-auto md:h-14 shrink-0"
+                    onError={() => setLogoOk(false)}
+                  />
+                ) : (
+                  <span className="text-base font-semibold tracking-wide">Moduz+</span>
+                )}
+              </a>
 
-                {/* Ações no mobile (não espreme logo) */}
-                <div className="flex items-center gap-2 md:hidden">
-                  <a
-                    href="/auth/logout"
-                    className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
-                    title="Sair deste dispositivo"
-                  >
-                    Sair
-                  </a>
-                  <a
-                    href="/auth/logout-all"
-                    className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
-                    title="Sair de todas as sessões"
-                  >
-                    Sair tudo
-                  </a>
-                </div>
-              </div>
+              {/* Desktop subtitle apenas */}
+              <span className="hidden md:inline text-xs text-slate-500">{headerSubtitle}</span>
+            </div>
 
-              {/* Subtitle só desktop */}
-              <div className="hidden md:block text-xs text-slate-500">{headerSubtitle}</div>
-
-              {/* Controles (desktop) / Linha 2 (mobile) */}
-              <div className="flex flex-wrap items-center gap-2 md:gap-3">
+            <div className="mt-3 flex flex-col gap-2 md:mt-0 md:flex-row md:items-center md:justify-end md:gap-3">
+              <div className="flex items-center gap-2 md:gap-3">
                 {loading ? (
                   <span className="text-xs text-slate-500">A carregar…</span>
                 ) : err ? (
@@ -370,7 +340,9 @@ export function AdmShell(props: { children: React.ReactNode }) {
                     onChangeEmpresaId={onChangeEmpresaId}
                   />
                 )}
+              </div>
 
+              <div className="flex items-center gap-2">
                 <a
                   href="/adm/core/modulos"
                   className={classNames(
@@ -384,24 +356,17 @@ export function AdmShell(props: { children: React.ReactNode }) {
                   Módulos
                 </a>
 
-                {/* Ações desktop */}
-                <div className="hidden md:flex items-center gap-2">
-                  <a
-                    href="/auth/logout"
-                    className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
-                    title="Sair deste dispositivo"
-                  >
-                    Sair
-                  </a>
-                  <a
-                    href="/auth/logout-all"
-                    className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
-                    title="Sair de todas as sessões"
-                  >
-                    Sair de todas
-                  </a>
-                </div>
+                <a
+                  href="/auth/logout"
+                  className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
+                  title="Sair"
+                >
+                  Sair
+                </a>
               </div>
+
+              {/* Mobile subtitle (abaixo) */}
+              <span className="md:hidden text-xs text-slate-500">{headerSubtitle}</span>
             </div>
           </div>
 
@@ -422,7 +387,9 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 </a>
               ))}
 
-              {modulesLoading ? <span className="ml-2 text-xs text-slate-500">a atualizar…</span> : null}
+              {modulesLoading ? (
+                <span className="ml-2 text-xs text-slate-500">a actualizar…</span>
+              ) : null}
             </nav>
           </div>
         </header>
