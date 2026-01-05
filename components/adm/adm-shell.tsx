@@ -338,6 +338,7 @@ export function AdmShell(props: { children: React.ReactNode }) {
               <span className="hidden md:inline text-xs text-slate-500">{headerSubtitle}</span>
             </div>
 
+            {/* ✅ Ajuste cirúrgico: no mobile, quebra em 2 linhas para não esmagar o logo */}
             <div className="flex flex-col items-end gap-2 md:flex-row md:items-center md:gap-3">
               <div className="flex items-center">
                 {loading ? (
@@ -376,6 +377,8 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 </a>
               </div>
             </div>
+          </div>
+
           <div className="mx-auto max-w-6xl px-4 pb-4">
             <nav className="flex flex-wrap items-center gap-2">
               {menuItems.map((it) => (
