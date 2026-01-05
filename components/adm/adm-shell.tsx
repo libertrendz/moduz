@@ -338,42 +338,44 @@ export function AdmShell(props: { children: React.ReactNode }) {
               <span className="hidden md:inline text-xs text-slate-500">{headerSubtitle}</span>
             </div>
 
-            <div className="flex items-center gap-2 md:gap-3">
-              {loading ? (
-                <span className="text-xs text-slate-500">A carregar…</span>
-              ) : err ? (
-                <span className="text-xs text-red-300">{err}</span>
-              ) : (
-                <EmpresaSwitcher
-                  empresas={empresas}
-                  activeEmpresaId={empresaId}
-                  onChangeEmpresaId={onChangeEmpresaId}
-                />
-              )}
-
-              <a
-                href="/adm/core/modulos"
-                className={classNames(
-                  "rounded-md border px-3 py-2 text-xs transition",
-                  isActive("/adm/core/modulos")
-                    ? "border-slate-700 bg-slate-900 text-slate-50"
-                    : "border-slate-800 bg-slate-950 text-slate-200 hover:bg-slate-900"
+            <div className="flex flex-col items-end gap-2 md:flex-row md:items-center md:gap-3">
+              <div className="flex items-center">
+                {loading ? (
+                  <span className="text-xs text-slate-500">A carregar…</span>
+                ) : err ? (
+                  <span className="text-xs text-red-300">{err}</span>
+                ) : (
+                  <EmpresaSwitcher
+                    empresas={empresas}
+                    activeEmpresaId={empresaId}
+                    onChangeEmpresaId={onChangeEmpresaId}
+                  />
                 )}
-                title="Gestão de Módulos"
-              >
-                Módulos
-              </a>
+              </div>
 
-              <a
-                href="/auth/logout"
-                className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
-                title="Sair"
-              >
-                Sair
-              </a>
+              <div className="flex items-center gap-2">
+                <a
+                  href="/adm/core/modulos"
+                  className={classNames(
+                    "rounded-md border px-3 py-2 text-xs transition",
+                    isActive("/adm/core/modulos")
+                      ? "border-slate-700 bg-slate-900 text-slate-50"
+                      : "border-slate-800 bg-slate-950 text-slate-200 hover:bg-slate-900"
+                  )}
+                  title="Gestão de Módulos"
+                >
+                  Módulos
+                </a>
+
+                <a
+                  href="/auth/logout"
+                  className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900"
+                  title="Sair"
+                >
+                  Sair
+                </a>
+              </div>
             </div>
-          </div>
-
           <div className="mx-auto max-w-6xl px-4 pb-4">
             <nav className="flex flex-wrap items-center gap-2">
               {menuItems.map((it) => (
