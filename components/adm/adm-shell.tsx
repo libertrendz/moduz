@@ -326,8 +326,17 @@ export function AdmShell(props: { children: React.ReactNode }) {
                 )}
               </a>
 
-              {/* Desktop subtitle */}
-              <span className="hidden md:inline text-xs text-slate-500">{headerSubtitle}</span>
+              {/* Subtitle: também no mobile (truncado), como no desktop */}
+              <span
+  className={classNames(
+    "text-xs text-slate-500 text-right",
+    "max-w-[55vw] truncate",     // mobile: não rebenta a linha, corta com …
+    "md:max-w-none md:truncate-0" // desktop: sem limite
+  )}
+  title={headerSubtitle}
+>
+  {headerSubtitle}
+</span>
             </div>
 
             {/* Linha 2 (mobile): dropdown + botões na mesma linha */}
