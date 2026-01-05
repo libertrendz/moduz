@@ -3,13 +3,12 @@
  * Moduz+ | Logout Route
  * Arquivo: app/auth/logout/route.ts
  * Módulo: Core (Auth)
- * Etapa: Logout SSR (v1.3.1)
+ * Etapa: Logout SSR (v1.4 - local)
  * Descrição:
- *  - Encerra sessão Supabase (cookies) APENAS neste dispositivo (scope local)
+ *  - Encerra sessão Supabase (cookies) SEM derrubar outras sessões do mesmo utilizador
+ *  - Usa scope "local" (evita cross-device logout)
  *  - Suporta GET e POST
  *  - Redireciona para /login usando a origin do request (sem localhost)
- * Risco mitigado:
- *  - Evita “logout no mobile derrubar sessão no desktop” (revogação global)
  * =============================================
  */
 
@@ -42,28 +41,13 @@ function supabaseServer() {
 }
 
 async function handler(req: Request) {
-  const cookieStore = cookies()
-
   try {
     const supabase = supabaseServer()
 
-    // ✅ Logout apenas local (não revoga sessões noutros dispositivos)
+    // ✅ CRÍTICO: local por defeito (não revoga sessões noutros devices)
     await supabase.auth.signOut({ scope: "local" })
   } catch {
     // Mesmo se falhar, seguimos com redirect (não travar logout)
-  }
-
-  // ✅ Limpeza defensiva dos cookies locais do Supabase neste device
-  // (não afeta outros dispositivos; apenas o browser atual)
-  try {
-    const all = cookieStore.getAll()
-    for (const c of all) {
-      if (c.name.startsWith("sb-")) {
-        cookieStore.set({ name: c.name, value: "", path: "/", maxAge: 0 })
-      }
-    }
-  } catch {
-    // ignore
   }
 
   const origin = new URL(req.url).origin
