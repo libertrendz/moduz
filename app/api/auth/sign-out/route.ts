@@ -1,27 +1,26 @@
 /**
  * =============================================
- * Moduz+ | Auth Sign-Out (SSR Cookies)
+ * Moduz+ | Sign-out Alias (API)
  * Arquivo: app/api/auth/sign-out/route.ts
  * Módulo: Core (Auth)
- * Etapa: Logout SSR cookie (v1)
+ * Etapa: Compat (v1)
  * Descrição:
- *  - Encerra sessão Supabase
- *  - Remove cookies SSR
+ *  - Alias histórico
+ *  - Redirecciona para /auth/logout
  * =============================================
  */
 
 import { NextResponse } from "next/server"
-import { supabaseServer } from "../../../../lib/supabase/server"
 
-export async function POST() {
-  try {
-    const supabase = supabaseServer()
-    await supabase.auth.signOut()
-    return NextResponse.json({ ok: true })
-  } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: "UNEXPECTED", details: e?.message ?? null },
-      { status: 500 }
-    )
-  }
+function redirect(req: Request) {
+  const origin = new URL(req.url).origin
+  return NextResponse.redirect(new URL("/auth/logout", origin))
+}
+
+export async function GET(req: Request) {
+  return redirect(req)
+}
+
+export async function POST(req: Request) {
+  return redirect(req)
 }
