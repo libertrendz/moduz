@@ -3,16 +3,16 @@
  * Moduz+ | API Admin
  * Arquivo: app/api/admin/core/modules/list/route.ts
  * Módulo: Core (Gestão de Módulos)
- * Etapa: Listar módulos habilitados (v1.1.1)
+ * Etapa: Listar módulos habilitados (v1.1.2)
  * Descrição:
  *  - Autentica via Supabase SSR (cookies)
  *  - Verifica perfil admin em public.profiles por empresa_id + user_id
  *  - Garante seed idempotente e retorna modules_enabled
  *
- * Patch v1.1.1 (cirúrgico):
+ * Patch v1.1.x (cirúrgico):
  *  - Se x-empresa-id não vier, resolve fallback:
  *      - escolhe a 1ª empresa ativa onde o user tem profile admin
- *  - Ajuste TS: AdminCheck tipado como discriminated union (evita erro no build)
+ *  - Ajuste TS: type-guard explícito (evita erro de narrowing no build)
  * =============================================
  */
 
@@ -22,14 +22,18 @@ import { createSupabaseServerClient } from "../../../../../../lib/supabase/serve
 
 type Json = Record<string, unknown>
 
-type AdminCheck =
-  | { ok: true; profileId: string }
-  | {
-      ok: false
-      status: number
-      error: "PROFILE_LOOKUP_FAILED" | "NO_PROFILE" | "NOT_ADMIN"
-      details?: string
-    }
+type AdminCheckOk = { ok: true; profileId: string }
+type AdminCheckErr = {
+  ok: false
+  status: number
+  error: "PROFILE_LOOKUP_FAILED" | "NO_PROFILE" | "NOT_ADMIN"
+  details?: string
+}
+type AdminCheck = AdminCheckOk | AdminCheckErr
+
+function isAdminError(x: AdminCheck): x is AdminCheckErr {
+  return x.ok === false
+}
 
 function env(name: string): string {
   const v = process.env[name]
@@ -113,8 +117,8 @@ export async function GET(req: Request) {
 
     // 2) empresa: header -> fallback
     let empresaId = getEmpresaId(req)
-    let adminCheck: AdminCheck | null = null
 
+    let adminCheck: AdminCheck
     if (!empresaId) {
       const fb = await resolveEmpresaIdFallback(user.id)
       if (!fb) return NextResponse.json({ error: "MISSING_EMPRESA_ID" }, { status: 400 })
@@ -125,8 +129,8 @@ export async function GET(req: Request) {
       adminCheck = await assertAdmin(user.id, empresaId)
     }
 
-    // 3) check admin (TS agora entende o narrowing)
-    if (!adminCheck.ok) {
+    // 3) check admin (type-guard explícito)
+    if (isAdminError(adminCheck)) {
       return NextResponse.json(
         { error: adminCheck.error, details: adminCheck.details ?? null },
         { status: adminCheck.status }
