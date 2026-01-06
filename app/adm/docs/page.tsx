@@ -3,42 +3,37 @@
  * Moduz+ | Docs
  * Arquivo: app/adm/docs/page.tsx
  * Módulo: Docs
- * Etapa: List (v1)
+ * Etapa: MVP Upload (v1.0.1)
  * Descrição:
- *  - Lista documentos por empresa (top 200)
- *  - Download via signed URL
- *  - Link para Upload
- *  - Padrão Moduz: empresa_id via localStorage + header x-empresa-id
+ *  - Upload via Signed Upload URL (server-side) -> não depende de policies no bucket
+ *  - Cria registo em public.docs + finaliza metadados + audit_log
+ *  - Hard rule Moduz: não explodir UI por ENV ausente (mostrar erro controlado)
  * =============================================
  */
 
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
+import { createClient } from "@supabase/supabase-js"
 import { useToast } from "../../../components/ui/toast-context"
 
-type DocRow = {
-  id: string
-  storage_path: string
-  filename: string | null
-  mime_type: string | null
-  size_bytes: number | null
-  created_at: string
-  ref_table: string | null
-  ref_id: string | null
-}
-
-type ListResponse =
-  | { ok: true; empresa_id: string; docs: DocRow[] }
+type CreateResp =
+  | {
+      ok: true
+      doc: {
+        id: string
+        empresa_id: string
+        storage_bucket: string
+        storage_path: string
+        created_at: string
+      }
+      upload: { signed_url: string; token: string }
+    }
   | { ok: false; error: string; details?: string | null }
 
-type DownloadResponse =
-  | { ok: true; url: string }
+type CompleteResp =
+  | { ok: true; doc_id: string; audit?: string; audit_details?: string | null }
   | { ok: false; error: string; details?: string | null }
-
-function classNames(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ")
-}
 
 function getEmpresaId(): string | null {
   try {
@@ -49,279 +44,198 @@ function getEmpresaId(): string | null {
   }
 }
 
-function formatDt(v: string) {
-  try {
-    return new Date(v).toLocaleString("pt-PT")
-  } catch {
-    return v
+function formatBytes(n: number) {
+  if (!Number.isFinite(n) || n <= 0) return "—"
+  const units = ["B", "KB", "MB", "GB"]
+  let i = 0
+  let x = n
+  while (x >= 1024 && i < units.length - 1) {
+    x = x / 1024
+    i++
   }
-}
-
-function formatBytes(n: number | null) {
-  if (!n || n <= 0) return "—"
-  const kb = 1024
-  const mb = kb * 1024
-  const gb = mb * 1024
-  if (n >= gb) return `${(n / gb).toFixed(2)} GB`
-  if (n >= mb) return `${(n / mb).toFixed(2)} MB`
-  if (n >= kb) return `${(n / kb).toFixed(2)} KB`
-  return `${n} B`
+  return `${x.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
 }
 
 export default function DocsHomePage() {
   const { showToast } = useToast()
+  const inputRef = useRef<HTMLInputElement | null>(null)
 
-  const [empresaId, setEmpresaId] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [err, setErr] = useState<string | null>(null)
-  const [docs, setDocs] = useState<DocRow[]>([])
-  const [busyId, setBusyId] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [last, setLast] = useState<{
+    doc_id: string
+    filename: string
+    size_bytes: number
+    storage_bucket: string
+    storage_path: string
+    created_at: string
+  } | null>(null)
 
-  const hasDocs = useMemo(() => docs.length > 0, [docs])
+  // ENV pública (não pode "throwar" no client)
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-  async function load(forceEmpresaId?: string | null) {
-    setLoading(true)
-    setErr(null)
+  const supabase = useMemo(() => {
+    if (!supabaseUrl || !supabaseAnonKey) return null
 
-    try {
-      const eid = forceEmpresaId ?? getEmpresaId()
-      setEmpresaId(eid)
+    // Upload ao signed URL requer supabase client (anon) no browser
+    return createClient(supabaseUrl, supabaseAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  }, [supabaseUrl, supabaseAnonKey])
 
-      if (!eid) {
-        setDocs([])
-        setErr("Selecione uma empresa para continuar.")
-        return
-      }
-
-      const r = await fetch("/api/admin/docs/list", {
-        method: "GET",
-        headers: { "x-empresa-id": eid },
-        credentials: "include",
-      })
-
-      const j = (await r.json().catch(() => null)) as ListResponse | null
-      if (!r.ok || !j) {
-        setDocs([])
-        setErr((j as any)?.error ?? "Falha ao carregar documentos.")
-        return
-      }
-
-      if ("ok" in j && j.ok === false) {
-        setDocs([])
-        setErr(j.error)
-        return
-      }
-
-      // ✅ Moduz: ignora respostas que não correspondam à empresa selecionada
-      if (j.empresa_id && j.empresa_id !== eid) return
-
-      setDocs(Array.isArray(j.docs) ? j.docs : [])
-    } catch (e: any) {
-      setDocs([])
-      setErr(e?.message ?? "Erro inesperado ao carregar.")
-    } finally {
-      setLoading(false)
-    }
+  async function onPickFile() {
+    inputRef.current?.click()
   }
 
-  async function download(docId: string) {
+  async function onSelectedFile(file: File | null) {
+    if (!file) return
+
+    if (!supabase) {
+      showToast({ kind: "err", msg: "Configuração Supabase (public) ausente. Verifique envs na Vercel." })
+      return
+    }
+
+    const empresaId = getEmpresaId()
     if (!empresaId) {
       showToast({ kind: "err", msg: "Empresa não definida." })
       return
     }
 
-    setBusyId(docId)
-
+    setBusy(true)
     try {
-      const r = await fetch(`/api/admin/docs/download-url?id=${encodeURIComponent(docId)}`, {
-        method: "GET",
-        headers: { "x-empresa-id": empresaId },
+      // 1) create: cria registo e devolve signed upload url + token
+      const r1 = await fetch("/api/admin/docs/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-empresa-id": empresaId,
+        },
         credentials: "include",
+        body: JSON.stringify({
+          filename: file.name,
+          mime_type: file.type || null,
+          size_bytes: file.size || null,
+        }),
       })
 
-      const j = (await r.json().catch(() => null)) as DownloadResponse | null
-      if (!r.ok || !j) throw new Error((j as any)?.error ?? "Falha ao gerar link.")
-
-      if ("ok" in j && j.ok === true) {
-        window.open(j.url, "_blank", "noopener,noreferrer")
-        return
+      const j1 = (await r1.json().catch(() => null)) as CreateResp | null
+      if (!r1.ok || !j1 || j1.ok !== true) {
+        throw new Error((j1 as any)?.error || "Falha ao iniciar upload.")
       }
 
-      throw new Error((j as any)?.error ?? "Falha ao gerar link.")
+      // 2) upload ao signed url (não precisa policies)
+      const { storage_bucket, storage_path } = j1.doc
+      const { token } = j1.upload
+
+      const up = await supabase.storage
+        .from(storage_bucket)
+        .uploadToSignedUrl(storage_path, token, file, { upsert: true })
+
+      if (up.error) {
+        throw new Error(`UPLOAD_FAILED: ${up.error.message}`)
+      }
+
+      // 3) complete: finaliza metadados + audit_log
+      const r2 = await fetch("/api/admin/docs/complete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-empresa-id": empresaId,
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          doc_id: j1.doc.id,
+          filename: file.name,
+          mime_type: file.type || null,
+          size_bytes: file.size || null,
+        }),
+      })
+
+      const j2 = (await r2.json().catch(() => null)) as CompleteResp | null
+      if (!r2.ok || !j2 || j2.ok !== true) {
+        throw new Error((j2 as any)?.error || "Falha ao finalizar upload.")
+      }
+
+      setLast({
+        doc_id: j1.doc.id,
+        filename: file.name,
+        size_bytes: file.size,
+        storage_bucket,
+        storage_path,
+        created_at: j1.doc.created_at,
+      })
+
+      showToast({ kind: "ok", msg: "Documento enviado com sucesso." })
     } catch (e: any) {
-      showToast({ kind: "err", msg: e?.message ?? "Erro inesperado." })
+      showToast({ kind: "err", msg: e?.message || "Erro inesperado no upload." })
     } finally {
-      setBusyId(null)
+      setBusy(false)
+      if (inputRef.current) inputRef.current.value = ""
     }
   }
 
-  useEffect(() => {
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Recarrega quando trocar empresa no switcher (AdmShell emite o evento)
-  useEffect(() => {
-    const onEmpresaChanged = (ev: Event) => {
-      const detail = (ev as CustomEvent)?.detail as { empresa_id?: string } | undefined
-      const eid = detail?.empresa_id ?? null
-      if (!eid) return
-      load(eid)
-    }
-
-    window.addEventListener("moduz:empresa-changed", onEmpresaChanged as any)
-    return () => window.removeEventListener("moduz:empresa-changed", onEmpresaChanged as any)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  const envMissing = !supabaseUrl || !supabaseAnonKey
 
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto">
+    <div className="max-w-5xl mx-auto p-4 md:p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-50">Docs</h1>
           <p className="mt-2 text-sm text-slate-400">
-            Documentos e anexos da empresa, ligados a registos e processos. Upload via Storage (Signed URL).
+            Repositório universal de documentos por empresa. Upload via Storage (Signed URL).
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <a
-            href="/adm/docs/upload"
-            className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 hover:bg-slate-900"
-          >
-            Upload
-          </a>
+        <button
+          onClick={onPickFile}
+          disabled={busy || envMissing}
+          className={[
+            "rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 hover:bg-slate-900",
+            busy || envMissing ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+          ].join(" ")}
+          title={envMissing ? "Env pública Supabase ausente" : "Enviar ficheiro"}
+        >
+          {busy ? "A enviar…" : "Upload"}
+        </button>
 
-          <button
-            onClick={() => load()}
-            className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 hover:bg-slate-900"
-          >
-            Atualizar
-          </button>
-        </div>
+        <input
+          ref={inputRef}
+          type="file"
+          className="hidden"
+          onChange={(e) => onSelectedFile(e.target.files?.[0] ?? null)}
+        />
       </div>
 
-      {err ? (
-        <div className="mt-4 rounded-lg border border-red-900/60 bg-red-950/30 p-3">
-          <p className="text-sm text-red-200">{err}</p>
+      {envMissing ? (
+        <div className="mt-4 rounded-lg border border-amber-900/60 bg-amber-950/25 p-3">
+          <p className="text-sm text-amber-200">
+            Configuração Supabase (pública) ausente. Verifique na Vercel:
+            <span className="font-mono"> NEXT_PUBLIC_SUPABASE_URL</span> e{" "}
+            <span className="font-mono">NEXT_PUBLIC_SUPABASE_ANON_KEY</span>.
+          </p>
         </div>
       ) : null}
 
-      {/* MOBILE: cards */}
-      <div className="mt-6 space-y-3 md:hidden">
-        {loading ? (
-          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-400">
-            A carregar…
-          </div>
-        ) : !hasDocs ? (
-          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-400">
-            Ainda não há uploads nesta empresa. Clique em <span className="text-slate-200">Upload</span>.
-          </div>
-        ) : (
-          docs.map((d) => (
-            <div key={d.id} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-slate-100 truncate">
-                    {d.filename ?? d.id}
-                  </div>
-                  <div className="mt-1 text-xs text-slate-500 font-mono">
-                    {d.mime_type ?? "—"} • {formatBytes(d.size_bytes)}
-                  </div>
-                  <div className="mt-2 text-xs text-slate-500 font-mono">
-                    {formatDt(d.created_at)}
-                  </div>
-                  {d.ref_table || d.ref_id ? (
-                    <div className="mt-2 text-xs text-slate-500 font-mono">
-                      Ref: {d.ref_table ?? "—"} / {d.ref_id ?? "—"}
-                    </div>
-                  ) : null}
-                </div>
+      <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950 p-4">
+        <p className="text-sm text-slate-300">Estado</p>
 
-                <button
-                  onClick={() => download(d.id)}
-                  disabled={busyId === d.id}
-                  className={classNames(
-                    "rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900 shrink-0",
-                    busyId === d.id ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
-                  )}
-                >
-                  {busyId === d.id ? "A gerar…" : "Abrir"}
-                </button>
+        {last ? (
+          <div className="mt-3 text-sm text-slate-400">
+            <div className="flex flex-col gap-1">
+              <div>
+                <span className="text-slate-300">Último upload:</span> {last.filename}{" "}
+                <span className="text-slate-500">({formatBytes(last.size_bytes)})</span>
+              </div>
+              <div className="font-mono text-xs text-slate-500">doc_id: {last.doc_id}</div>
+              <div className="font-mono text-xs text-slate-500">
+                {last.storage_bucket}:{last.storage_path}
               </div>
             </div>
-          ))
-        )}
-      </div>
-
-      {/* DESKTOP: tabela */}
-      <div className="mt-6 hidden md:block overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
-        <div className="grid grid-cols-12 gap-0 border-b border-slate-800 bg-slate-950/60 px-4 py-3 text-xs text-slate-400">
-          <div className="col-span-5">Documento</div>
-          <div className="col-span-3">Tipo</div>
-          <div className="col-span-2">Tamanho</div>
-          <div className="col-span-2 text-right">Ações</div>
-        </div>
-
-        {loading ? (
-          <div className="p-4 text-sm text-slate-400">A carregar…</div>
-        ) : !hasDocs ? (
-          <div className="p-4 text-sm text-slate-400">
-            Ainda não há uploads nesta empresa. Clique em <span className="text-slate-200">Upload</span>.
           </div>
         ) : (
-          <ul>
-            {docs.map((d) => (
-              <li
-                key={d.id}
-                className="grid grid-cols-12 gap-0 px-4 py-4 border-b border-slate-900 last:border-b-0 items-center"
-              >
-                <div className="col-span-5 min-w-0">
-                  <div className="text-sm font-semibold text-slate-100 truncate">
-                    {d.filename ?? d.id}
-                  </div>
-                  <div className="mt-1 text-xs text-slate-500 font-mono">
-                    {formatDt(d.created_at)}
-                    {d.ref_table || d.ref_id ? (
-                      <>
-                        {" "}
-                        • Ref: {d.ref_table ?? "—"} / {d.ref_id ?? "—"}
-                      </>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="col-span-3 text-sm text-slate-400 truncate">
-                  {d.mime_type ?? "—"}
-                </div>
-
-                <div className="col-span-2 text-sm text-slate-400 font-mono">
-                  {formatBytes(d.size_bytes)}
-                </div>
-
-                <div className="col-span-2 flex justify-end">
-                  <button
-                    onClick={() => download(d.id)}
-                    disabled={busyId === d.id}
-                    className={classNames(
-                      "rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 hover:bg-slate-900",
-                      busyId === d.id ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
-                    )}
-                  >
-                    {busyId === d.id ? "A gerar…" : "Abrir"}
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div className="mt-4 text-xs text-slate-500">
-        {empresaId ? (
-          <span className="font-mono">empresa_id: {empresaId}</span>
-        ) : (
-          <span>empresa_id: —</span>
+          <p className="mt-2 text-sm text-slate-400">
+            Ainda não há uploads nesta sessão. Clique em <span className="text-slate-200">Upload</span>.
+          </p>
         )}
       </div>
     </div>
