@@ -22,6 +22,7 @@ import {
 } from "./empresa-switcher"
 import { MODULES, ROUTES_BY_MODULE, type ModuleKey } from "./module-registry"
 import { usePathname } from "next/navigation"
+import Link from "next/link"
 
 import { ToastProvider } from "../ui/toast-context"
 import { ToastHost } from "../ui/toast-host"
@@ -239,11 +240,11 @@ export function AdmShell(props: { children: React.ReactNode }) {
         credentials: "include",
       })
 
-const j = safeJson<ModulesListResponse>(await r.json().catch(() => null))
-if (!r.ok || !j || "error" in j) return
+      const j = safeJson<ModulesListResponse>(await r.json().catch(() => null))
+      if (!r.ok || !j || "error" in j) return
 
-// ✅ Moduz: ignora respostas de outra empresa (evita race com request sem header / //api/...)
-if ((j as any).empresa_id && (j as any).empresa_id !== eid) return
+      // ✅ Moduz: ignora respostas de outra empresa (evita race com request sem header / //api/...)
+      if ((j as any).empresa_id && (j as any).empresa_id !== eid) return
 
       const enabled = (j.modules ?? [])
         .filter((m) => m.enabled)
@@ -419,7 +420,7 @@ if ((j as any).empresa_id && (j as any).empresa_id !== eid) return
               {menuItems.map((it) => {
                 const mk = moduleKeyByHref.get(it.href) ?? "core"
                 return (
-                  <a
+                  <Link
                     key={it.href}
                     href={it.href}
                     className={classNames(
@@ -431,7 +432,7 @@ if ((j as any).empresa_id && (j as any).empresa_id !== eid) return
                   >
                     <span aria-hidden="true" className="h-2 w-2 rounded-full" style={getDotStyle(mk)} />
                     {it.label}
-                  </a>
+                  </Link>
                 )
               })}
 
