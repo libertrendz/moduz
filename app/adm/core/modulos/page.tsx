@@ -256,7 +256,7 @@ export default function ModulosPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-50">Gestão de Módulos</h1>
           <p className="mt-2 text-sm text-slate-400">
-            Ative/desative módulos por empresa. Core é obrigatório. Módulos “Em breve” não podem ser ativados.
+            Ative ou desative módulos por empresa. O Core é obrigatório. Módulos marcados como ‘Em breve’ ainda não estão disponíveis.
           </p>
         </div>
 
