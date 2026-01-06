@@ -187,7 +187,7 @@ export default function AdmHomePage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-50">Core</h1>
           <p className="mt-2 text-sm text-slate-400">
-            Contexto e estado da empresa ativa (utilizador, perfil e módulos habilitados).
+            Base do Moduz+: empresas, utilizadores, perfis, definições, módulos e auditoria. Define o contexto da empresa activa.
           </p>
         </div>
 
