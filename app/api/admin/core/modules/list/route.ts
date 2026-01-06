@@ -3,11 +3,16 @@
  * Moduz+ | API Admin
  * Arquivo: app/api/admin/core/modules/list/route.ts
  * Módulo: Core (Gestão de Módulos)
- * Etapa: Listar módulos habilitados (v1)
+ * Etapa: Listar módulos habilitados (v1.1)
  * Descrição:
  *  - Autentica via Supabase SSR (cookies)
  *  - Verifica perfil admin em public.profiles por empresa_id + user_id
  *  - Garante seed idempotente e retorna modules_enabled
+ *
+ * Patch v1.1 (cirúrgico):
+ *  - Se x-empresa-id não vier (ex.: request com //api/...), resolve fallback:
+ *      - escolhe a 1ª empresa ativa onde o user tem profile admin
+ *  - Evita 400 MISSING_EMPRESA_ID em casos de chamada “sem header”
  * =============================================
  */
 
@@ -58,18 +63,56 @@ async function assertAdmin(userId: string, empresaId: string) {
   return { ok: true as const, profileId: profile.id };
 }
 
+/**
+ * Fallback seguro para quando x-empresa-id não vem:
+ * - procura a 1ª empresa (por created_at) onde o user tem profile admin ativo.
+ */
+async function resolveEmpresaIdFallback(userId: string): Promise<{ empresaId: string; profileId: string } | null> {
+  const admin = supabaseAdmin();
+
+  const { data: p, error } = await admin
+    .from("profiles")
+    .select("id, empresa_id, role, ativo, created_at")
+    .eq("user_id", userId)
+    .eq("role", "admin")
+    .eq("ativo", true)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) return null;
+  if (!p?.empresa_id || !p?.id) return null;
+
+  return { empresaId: String(p.empresa_id), profileId: String(p.id) };
+}
+
 export async function GET(req: Request) {
   try {
-    const empresaId = getEmpresaId(req);
-    if (!empresaId) return NextResponse.json({ error: "MISSING_EMPRESA_ID" }, { status: 400 });
-
+    // 1) autenticar primeiro (para poder fallback por user)
     const supabase = createSupabaseServerClient();
     const { data: userRes, error: userErr } = await supabase.auth.getUser();
     const user = userRes?.user;
 
     if (userErr || !user) return NextResponse.json({ error: "MISSING_SESSION" }, { status: 401 });
 
-    const adminCheck = await assertAdmin(user.id, empresaId);
+    // 2) empresa: header -> fallback
+    let empresaId = getEmpresaId(req);
+
+    // Se não veio header, tentamos fallback seguro (evita 400 fantasma)
+    let profileIdFromFallback: string | null = null;
+    if (!empresaId) {
+      const fb = await resolveEmpresaIdFallback(user.id);
+      if (!fb) return NextResponse.json({ error: "MISSING_EMPRESA_ID" }, { status: 400 });
+      empresaId = fb.empresaId;
+      profileIdFromFallback = fb.profileId;
+    }
+
+    // 3) confirmar admin (se veio do fallback, já é admin, mas mantemos check p/ robustez)
+    const adminCheck =
+      profileIdFromFallback
+        ? ({ ok: true as const, profileId: profileIdFromFallback } as const)
+        : await assertAdmin(user.id, empresaId);
+
     if (!adminCheck.ok) {
       return NextResponse.json(
         { error: adminCheck.error, details: (adminCheck as any).details ?? null },
