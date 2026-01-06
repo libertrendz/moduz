@@ -239,8 +239,11 @@ export function AdmShell(props: { children: React.ReactNode }) {
         credentials: "include",
       })
 
-      const j = safeJson<ModulesListResponse>(await r.json().catch(() => null))
-      if (!r.ok || !j || "error" in j) return
+const j = safeJson<ModulesListResponse>(await r.json().catch(() => null))
+if (!r.ok || !j || "error" in j) return
+
+// ✅ Moduz: ignora respostas de outra empresa (evita race com request sem header / //api/...)
+if ((j as any).empresa_id && (j as any).empresa_id !== eid) return
 
       const enabled = (j.modules ?? [])
         .filter((m) => m.enabled)
