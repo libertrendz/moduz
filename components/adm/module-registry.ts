@@ -44,48 +44,48 @@ export const MODULE_ORDER: ModuleKey[] = [
 export const MODULES: Record<ModuleKey, ModuleMeta> = {
   core: {
     title: "Core",
-    desc: "Base do sistema: empresas, perfis, settings, módulos e auditoria.",
+    desc: "Base do sistema: empresas, perfis, definições, módulos e auditoria.",
     implemented: true,
     locked: true,
   },
   docs: {
     title: "Docs",
-    desc: "Repositório universal de documentos integrado ao Storage.",
+    desc: "Documentos e anexos da empresa, ligados a registos e processos.",
     implemented: true,
   },
   people: {
     title: "People",
-    desc: "Colaboradores, recrutamento (ATS) e gestão de pessoas.",
+    desc: "Gestão de pessoas: colaboradores, recrutamento (ATS) e ciclo de vida.",
     implemented: false,
   },
   track: {
     title: "Track",
-    desc: "Ponto e tracking de tempo/atividades.",
+    desc: "Ponto e registo de tempo: equipas, tarefas e atividades.",
     implemented: false,
   },
   finance: {
     title: "Finance",
-    desc: "Contas, pagamentos, lançamentos e conciliações (fase 1).",
+    desc: "Movimentos, pagamentos e controlo financeiro operacional.",
     implemented: false,
   },
   bizz: {
     title: "Bizz",
-    desc: "Orçamentos, contratos e ciclo comercial.",
+    desc: "Propostas, contratos e ciclo comercial de ponta a ponta.",
     implemented: false,
   },
   stock: {
     title: "Stock",
-    desc: "Inventário, entradas/saídas e movimentações.",
+    desc: "Inventário e movimentações: entradas, saídas e controlo de stock.",
     implemented: false,
   },
   assets: {
     title: "Assets",
-    desc: "Ativos, manutenção e ciclo de vida.",
+    desc: "Ativos e manutenção: registo, estado e histórico.",
     implemented: false,
   },
   flow: {
     title: "Flow",
-    desc: "Projetos/processos/execução (transversal).",
+    desc: "Projetos e processos: execução, etapas e acompanhamento.",
     implemented: false,
   },
 }
