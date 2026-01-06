@@ -3,11 +3,11 @@
  * Moduz+ | Docs
  * Arquivo: app/adm/docs/page.tsx
  * Módulo: Docs
- * Etapa: MVP Upload (v1)
+ * Etapa: MVP Upload (v1.0.1)
  * Descrição:
  *  - Upload via Signed Upload URL (server-side) -> não depende de policies no bucket
  *  - Cria registo em public.docs + finaliza metadados + audit_log
- *  - Mantém mudanças estritamente no módulo Docs
+ *  - Hard rule Moduz: não explodir UI por ENV ausente (mostrar erro controlado)
  * =============================================
  */
 
@@ -34,12 +34,6 @@ type CreateResp =
 type CompleteResp =
   | { ok: true; doc_id: string; audit?: string; audit_details?: string | null }
   | { ok: false; error: string; details?: string | null }
-
-function env(name: string): string {
-  const v = process.env[name]
-  if (!v) throw new Error(`Missing env: ${name}`)
-  return v
-}
 
 function getEmpresaId(): string | null {
   try {
@@ -76,12 +70,18 @@ export default function DocsHomePage() {
     created_at: string
   } | null>(null)
 
+  // ENV pública (não pode "throwar" no client)
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
   const supabase = useMemo(() => {
+    if (!supabaseUrl || !supabaseAnonKey) return null
+
     // Upload ao signed URL requer supabase client (anon) no browser
-    return createClient(env("NEXT_PUBLIC_SUPABASE_URL"), env("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
+    return createClient(supabaseUrl, supabaseAnonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
-  }, [])
+  }, [supabaseUrl, supabaseAnonKey])
 
   async function onPickFile() {
     inputRef.current?.click()
@@ -89,6 +89,11 @@ export default function DocsHomePage() {
 
   async function onSelectedFile(file: File | null) {
     if (!file) return
+
+    if (!supabase) {
+      showToast({ kind: "err", msg: "Configuração Supabase (public) ausente. Verifique envs na Vercel." })
+      return
+    }
 
     const empresaId = getEmpresaId()
     if (!empresaId) {
@@ -169,6 +174,8 @@ export default function DocsHomePage() {
     }
   }
 
+  const envMissing = !supabaseUrl || !supabaseAnonKey
+
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6">
       <div className="flex items-start justify-between gap-4">
@@ -181,11 +188,12 @@ export default function DocsHomePage() {
 
         <button
           onClick={onPickFile}
-          disabled={busy}
+          disabled={busy || envMissing}
           className={[
             "rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 hover:bg-slate-900",
-            busy ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+            busy || envMissing ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
           ].join(" ")}
+          title={envMissing ? "Env pública Supabase ausente" : "Enviar ficheiro"}
         >
           {busy ? "A enviar…" : "Upload"}
         </button>
@@ -197,6 +205,16 @@ export default function DocsHomePage() {
           onChange={(e) => onSelectedFile(e.target.files?.[0] ?? null)}
         />
       </div>
+
+      {envMissing ? (
+        <div className="mt-4 rounded-lg border border-amber-900/60 bg-amber-950/25 p-3">
+          <p className="text-sm text-amber-200">
+            Configuração Supabase (pública) ausente. Verifique na Vercel:
+            <span className="font-mono"> NEXT_PUBLIC_SUPABASE_URL</span> e{" "}
+            <span className="font-mono">NEXT_PUBLIC_SUPABASE_ANON_KEY</span>.
+          </p>
+        </div>
+      ) : null}
 
       <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950 p-4">
         <p className="text-sm text-slate-300">Estado</p>
