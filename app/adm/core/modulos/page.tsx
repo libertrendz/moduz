@@ -60,6 +60,27 @@ function formatDt(v: string | null) {
   }
 }
 
+/**
+ * Cores por módulo (UI) — usado apenas nas bolinhas de status desta página.
+ * Fonte de verdade: HEX (objetivo), sem dependência de Tailwind safelist.
+ */
+const MODULE_COLOR_HEX: Record<string, string> = {
+  core: "#94a3b8", // cinza base
+  people: "#22c55e", // verde suave
+  finance: "#0f766e", // azul-petróleo
+  bizz: "#f59e0b", // dourado
+  track: "#ef4444", // vermelho alerta
+  stock: "#f97316", // laranja profundo
+  assets: "#94a3b8", // cinza aço
+  flow: "#8b5cf6", // roxo-safira
+  docs: "#a3a3a3", // cinza neutro
+}
+
+function getModuleDotStyle(moduleKey: string, enabled: boolean): React.CSSProperties {
+  const color = MODULE_COLOR_HEX[moduleKey] ?? "#64748b"
+  return { backgroundColor: color, opacity: enabled ? 1 : 0.35 }
+}
+
 function emitModulesUpdated(empresaId: string, enabledKeys: string[]) {
   try {
     window.dispatchEvent(
@@ -282,7 +303,10 @@ export default function ModulosPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
+                      <div
+                        className="h-2.5 w-2.5 rounded-full"
+                        style={getModuleDotStyle(m.module_key, m.enabled)}
+                      />
                       <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
                       <span className="rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
                         {m.module_key}
@@ -368,7 +392,10 @@ export default function ModulosPage() {
                 >
                   <div className="col-span-5">
                     <div className="flex items-center gap-2">
-                      <div className={classNames("h-2.5 w-2.5 rounded-full", m.enabled ? "bg-emerald-400" : "bg-slate-600")} />
+                      <div
+                        className="h-2.5 w-2.5 rounded-full"
+                        style={getModuleDotStyle(m.module_key, m.enabled)}
+                      />
                       <div className="text-sm font-semibold text-slate-100">{meta.title}</div>
 
                       <span className="ml-2 rounded-md border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 font-mono">
