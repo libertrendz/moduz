@@ -15,7 +15,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { useToast } from "../../components/ui/toast-context"
+import { useToast } from "../../../components/ui/toast-context"
 
 type DocRow = {
   id: string
