@@ -340,8 +340,8 @@ export function AdmShell(props: { children: React.ReactNode }) {
             </div>
 
             {/* Linha 2 (mobile): dropdown + botões na mesma linha */}
-            <div className="mt-3 flex flex-wrap items-center gap-2 md:mt-0 md:flex-nowrap md:justify-end md:gap-3">
-              <div className="flex-1 min-w-[220px] md:flex-none">
+            <div className="mt-3 flex items-center gap-2 md:mt-0 md:justify-end md:gap-3">
+              <div className="flex-1 min-w-0 overflow-hidden md:flex-none">
                 {loading ? (
                   <span className="text-xs text-slate-500">A carregar…</span>
                 ) : err ? (
