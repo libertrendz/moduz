@@ -136,14 +136,14 @@ export async function POST(req: Request) {
 
     // audit (não bloqueia)
     await admin.from("audit_log").insert({
-      empresa_id: empresaId,
-      actor_user_id: user.id,
-      actor_profile_id: adminCheck.profileId,
-      action: "DOC_CREATED",
-      entity: "docs",
-      entity_id: docId,
-      payload: { doc_id: docId, storage_bucket, storage_path, filename, mime_type, size_bytes },
-    }).catch(() => null)
+  empresa_id: empresaId,
+  actor_user_id: user.id,
+  actor_profile_id: adminCheck.profileId,
+  action: "DOC_CREATED",
+  entity: "docs",
+  entity_id: docId,
+  payload: { doc_id: docId, storage_bucket, storage_path, filename, mime_type, size_bytes },
+}).catch(() => null)
 
     return NextResponse.json(
       {
