@@ -101,6 +101,26 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "DB_ERROR", details: insErr?.message ?? null }, { status: 500 })
     }
 
+    // ✅ Moduz: audit nunca pode quebrar o fluxo (sem .catch em builder)
+    const { error: auditErr } = await admin.from("audit_log").insert({
+      empresa_id: empresaId,
+      actor_user_id: user.id,
+      actor_profile_id: member.profileId,
+      action: "DOC_CREATED",
+      entity: "docs",
+      entity_table: "docs",
+      entity_id: docId,
+      payload: {
+        doc_id: docId,
+        storage_bucket: bucket,
+        storage_path,
+        filename: filename || null,
+        mime_type,
+        size_bytes,
+      },
+    })
+    void auditErr
+
     // Signed Upload URL (não depende de policies)
     const { data: up, error: upErr } = await admin.storage.from(bucket).createSignedUploadUrl(storage_path)
     if (upErr || !up?.signedUrl || !up?.token) {
