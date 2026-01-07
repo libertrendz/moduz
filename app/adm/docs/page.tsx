@@ -3,17 +3,18 @@
  * Moduz+ | Docs
  * Arquivo: app/adm/docs/page.tsx
  * Módulo: Docs
- * Etapa: MVP Upload (v1.0.1)
+ * Etapa: MVP Upload (v1.0.2)
  * Descrição:
  *  - Upload via Signed Upload URL (server-side) -> não depende de policies no bucket
  *  - Cria registo em public.docs + finaliza metadados + audit_log
+ *  - Lista histórico (últimos 50) via /api/admin/docs/list
  *  - Hard rule Moduz: não explodir UI por ENV ausente (mostrar erro controlado)
  * =============================================
  */
 
 "use client"
 
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { createClient } from "@supabase/supabase-js"
 import { useToast } from "../../../components/ui/toast-context"
 
@@ -33,6 +34,22 @@ type CreateResp =
 
 type CompleteResp =
   | { ok: true; doc_id: string; audit?: string; audit_details?: string | null }
+  | { ok: false; error: string; details?: string | null }
+
+type DocRow = {
+  id: string
+  empresa_id: string
+  storage_bucket: string
+  storage_path: string
+  filename: string | null
+  mime_type: string | null
+  size_bytes: number | null
+  created_by: string | null
+  created_at: string
+}
+
+type ListResp =
+  | { ok: true; empresa_id: string; docs: DocRow[] }
   | { ok: false; error: string; details?: string | null }
 
 function getEmpresaId(): string | null {
@@ -56,6 +73,14 @@ function formatBytes(n: number) {
   return `${x.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
 }
 
+function formatDt(v: string) {
+  try {
+    return new Date(v).toLocaleString("pt-PT")
+  } catch {
+    return v
+  }
+}
+
 export default function DocsHomePage() {
   const { showToast } = useToast()
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -70,6 +95,10 @@ export default function DocsHomePage() {
     created_at: string
   } | null>(null)
 
+  const [listLoading, setListLoading] = useState(false)
+  const [listErr, setListErr] = useState<string | null>(null)
+  const [docs, setDocs] = useState<DocRow[]>([])
+
   // ENV pública (não pode "throwar" no client)
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -83,8 +112,44 @@ export default function DocsHomePage() {
     })
   }, [supabaseUrl, supabaseAnonKey])
 
+  const envMissing = !supabaseUrl || !supabaseAnonKey
+
   async function onPickFile() {
     inputRef.current?.click()
+  }
+
+  async function loadList() {
+    const empresaId = getEmpresaId()
+    if (!empresaId) {
+      setDocs([])
+      setListErr("Empresa não definida.")
+      return
+    }
+
+    setListLoading(true)
+    setListErr(null)
+
+    try {
+      const r = await fetch("/api/admin/docs/list", {
+        method: "GET",
+        headers: { "x-empresa-id": empresaId },
+        credentials: "include",
+      })
+
+      const j = (await r.json().catch(() => null)) as ListResp | null
+      if (!r.ok || !j || j.ok !== true) {
+        setDocs([])
+        setListErr((j as any)?.error ? String((j as any).error) : "Falha ao carregar histórico.")
+        return
+      }
+
+      setDocs(Array.isArray(j.docs) ? j.docs : [])
+    } catch (e: any) {
+      setDocs([])
+      setListErr(e?.message || "Erro inesperado ao carregar histórico.")
+    } finally {
+      setListLoading(false)
+    }
   }
 
   async function onSelectedFile(file: File | null) {
@@ -166,6 +231,9 @@ export default function DocsHomePage() {
       })
 
       showToast({ kind: "ok", msg: "Documento enviado com sucesso." })
+
+      // refresh histórico
+      loadList()
     } catch (e: any) {
       showToast({ kind: "err", msg: e?.message || "Erro inesperado no upload." })
     } finally {
@@ -174,7 +242,10 @@ export default function DocsHomePage() {
     }
   }
 
-  const envMissing = !supabaseUrl || !supabaseAnonKey
+  useEffect(() => {
+    loadList()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6">
@@ -186,17 +257,27 @@ export default function DocsHomePage() {
           </p>
         </div>
 
-        <button
-          onClick={onPickFile}
-          disabled={busy || envMissing}
-          className={[
-            "rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 hover:bg-slate-900",
-            busy || envMissing ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
-          ].join(" ")}
-          title={envMissing ? "Env pública Supabase ausente" : "Enviar ficheiro"}
-        >
-          {busy ? "A enviar…" : "Upload"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => loadList()}
+            className="rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 hover:bg-slate-900"
+            title="Atualizar histórico"
+          >
+            Atualizar
+          </button>
+
+          <button
+            onClick={onPickFile}
+            disabled={busy || envMissing}
+            className={[
+              "rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 hover:bg-slate-900",
+              busy || envMissing ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+            ].join(" ")}
+            title={envMissing ? "Env pública Supabase ausente" : "Enviar ficheiro"}
+          >
+            {busy ? "A enviar…" : "Upload"}
+          </button>
+        </div>
 
         <input
           ref={inputRef}
@@ -237,6 +318,51 @@ export default function DocsHomePage() {
             Ainda não há uploads nesta sessão. Clique em <span className="text-slate-200">Upload</span>.
           </p>
         )}
+      </div>
+
+      <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950 p-4">
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-sm text-slate-300">Histórico (últimos 50)</p>
+          {listLoading ? <span className="text-xs text-slate-500">a carregar…</span> : null}
+        </div>
+
+        {listErr ? (
+          <div className="mt-3 rounded-lg border border-red-900/60 bg-red-950/30 p-3">
+            <p className="text-sm text-red-200">{listErr}</p>
+          </div>
+        ) : null}
+
+        {!listErr && !listLoading && docs.length === 0 ? (
+          <p className="mt-2 text-sm text-slate-400">Ainda não existem documentos para mostrar.</p>
+        ) : null}
+
+        {!listErr && docs.length > 0 ? (
+          <ul className="mt-3 space-y-2">
+            {docs.map((d) => (
+              <li key={d.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm text-slate-100 truncate">
+                      {d.filename ?? <span className="text-slate-400">sem nome</span>}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500 font-mono truncate">doc_id: {d.id}</div>
+                    <div className="mt-1 text-xs text-slate-500 font-mono truncate">
+                      {d.storage_bucket}:{d.storage_path}
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 text-right">
+                    <div className="text-xs text-slate-400">{formatDt(d.created_at)}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {d.size_bytes ? formatBytes(d.size_bytes) : "—"}
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-500">{d.mime_type ?? "—"}</div>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
     </div>
   )
