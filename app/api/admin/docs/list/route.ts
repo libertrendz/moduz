@@ -3,7 +3,7 @@
  * Moduz+ | API Admin
  * Arquivo: app/api/admin/docs/list/route.ts
  * Módulo: Docs
- * Etapa: List (v1)
+ * Etapa: List (v1.0.1)
  * Descrição:
  *  - Autentica via Supabase SSR (cookies)
  *  - Valida membro ativo via public.profiles (empresa_id + user_id)
@@ -62,10 +62,12 @@ export async function GET(req: Request) {
 
     const member = await assertMember(user.id, empresaId)
     if (!member.ok) {
-      return NextResponse.json(
-        { ok: false, error: member.error, details: member.details ?? null },
-        { status: member.status }
-      )
+      // Narrowing explícito (TS-safe)
+      const err = "error" in member ? member.error : "UNEXPECTED"
+      const details = "details" in member ? (member.details ?? null) : null
+      const status = "status" in member ? member.status : 500
+
+      return NextResponse.json({ ok: false, error: err, details }, { status })
     }
 
     const admin = supabaseAdmin()
