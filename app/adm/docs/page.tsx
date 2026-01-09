@@ -3,11 +3,15 @@
  * Moduz+ | Docs
  * Arquivo: app/adm/docs/page.tsx
  * Módulo: Docs
- * Etapa: MVP Upload (v1.0.3)
+ * Etapa: MVP Upload (v1.0.3+)
  * Descrição:
  *  - Upload via Signed Upload URL (server-side) -> não depende de policies no bucket
  *  - Cria registo em public.docs + finaliza metadados + audit_log
  *  - Lista histórico (últimos 50) via /api/admin/docs/list
+ *  - Bónus (Moduz+):
+ *      - create envia module_key="docs" (vínculo semântico: ref_table="module:docs")
+ *      - cache local (30s) por empresa para histórico (melhor UX)
+ *      - reage a troca de empresa (evento moduz:empresa-changed)
  *  - UX Moduz:
  *      - "Estado" não depende só da sessão (usa histórico quando existe)
  *      - Mostra resumo e status por linha (quando disponível)
@@ -102,6 +106,47 @@ function statusLabel(v: boolean | null | undefined) {
   return "—"
 }
 
+/**
+ * Cache leve (Moduz+): histórico por empresa com TTL curto (evita piscar e acelera reload)
+ */
+const LS_DOCS_CACHE_PREFIX = "moduz_docs_list_cache::"
+const DOCS_CACHE_TTL_MS = 30_000
+
+type DocsCachePayload = {
+  ts: number
+  empresa_id: string
+  docs: DocRow[]
+}
+
+function cacheKey(empresaId: string) {
+  return `${LS_DOCS_CACHE_PREFIX}${empresaId}`
+}
+
+function readCache(empresaId: string): DocRow[] | null {
+  try {
+    const raw = window.localStorage.getItem(cacheKey(empresaId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as DocsCachePayload
+    if (!parsed || typeof parsed !== "object") return null
+    if (parsed.empresa_id !== empresaId) return null
+    if (!Array.isArray(parsed.docs)) return null
+    if (typeof parsed.ts !== "number") return null
+    if (Date.now() - parsed.ts > DOCS_CACHE_TTL_MS) return null
+    return parsed.docs
+  } catch {
+    return null
+  }
+}
+
+function writeCache(empresaId: string, docs: DocRow[]) {
+  try {
+    const payload: DocsCachePayload = { ts: Date.now(), empresa_id: empresaId, docs }
+    window.localStorage.setItem(cacheKey(empresaId), JSON.stringify(payload))
+  } catch {
+    // ignore
+  }
+}
+
 export default function DocsHomePage() {
   const { showToast } = useToast()
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -139,12 +184,21 @@ export default function DocsHomePage() {
     inputRef.current?.click()
   }
 
-  async function loadList() {
+  async function loadList(opts?: { preferCache?: boolean }) {
     const empresaId = getEmpresaId()
     if (!empresaId) {
       setDocs([])
       setListErr("Empresa não definida.")
       return
+    }
+
+    // ✅ UX Moduz+: se houver cache válida, mostra já (sem “piscar”)
+    if (opts?.preferCache) {
+      const cached = readCache(empresaId)
+      if (cached && cached.length) {
+        setDocs(cached)
+        setListErr(null)
+      }
     }
 
     setListLoading(true)
@@ -166,6 +220,7 @@ export default function DocsHomePage() {
 
       const arr = Array.isArray(j.docs) ? j.docs : []
       setDocs(arr)
+      writeCache(empresaId, arr)
     } catch (e: any) {
       setDocs([])
       setListErr(e?.message || "Erro inesperado ao carregar histórico.")
@@ -202,6 +257,9 @@ export default function DocsHomePage() {
           filename: file.name,
           mime_type: file.type || null,
           size_bytes: file.size || null,
+
+          // ✅ Bónus Moduz+: vincula ao módulo (ref_table="module:docs" no backend)
+          module_key: "docs",
         }),
       })
 
@@ -265,7 +323,16 @@ export default function DocsHomePage() {
   }
 
   useEffect(() => {
-    loadList()
+    // primeira carga: tenta cache e depois valida via API
+    loadList({ preferCache: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    // ✅ Moduz+: quando muda a empresa, recarrega docs (cache primeiro)
+    const onEmpresaChanged = () => loadList({ preferCache: true })
+    window.addEventListener("moduz:empresa-changed", onEmpresaChanged as any)
+    return () => window.removeEventListener("moduz:empresa-changed", onEmpresaChanged as any)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -475,10 +542,8 @@ export default function DocsHomePage() {
                       </div>
 
                       <div className="mt-1 text-xs text-slate-500">
-                        {formatDt(d.created_at)}{" "}
-                        <span className="text-slate-600">•</span>{" "}
-                        {d.size_bytes ? formatBytes(d.size_bytes) : "—"}{" "}
-                        <span className="text-slate-600">•</span>{" "}
+                        {formatDt(d.created_at)} <span className="text-slate-600">•</span>{" "}
+                        {d.size_bytes ? formatBytes(d.size_bytes) : "—"} <span className="text-slate-600">•</span>{" "}
                         {d.mime_type ?? "—"}
                       </div>
 
