@@ -8,6 +8,7 @@
  *  - Autentica via Supabase SSR (cookies)
  *  - Valida membro ativo via public.profiles (empresa_id + user_id)
  *  - Lista últimos 50 documentos da empresa (public.docs)
+ *  - Enriquecimento Moduz (leve): marca uploaded_ok com base em audit_log (DOC_UPLOADED)
  * =============================================
  */
 
@@ -83,11 +84,49 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: "DB_ERROR", details: error.message }, { status: 500 })
     }
 
+    const docs = (data ?? []) as Array<{
+      id: string
+      empresa_id: string
+      storage_bucket: string
+      storage_path: string
+      filename: string | null
+      mime_type: string | null
+      size_bytes: number | null
+      created_by: string | null
+      created_at: string
+    }>
+
+    // Enriquecer com uploaded_ok via audit_log (DOC_UPLOADED)
+    const ids = docs.map((d) => d.id).filter(Boolean)
+    const uploadedOk = new Set<string>()
+
+    if (ids.length > 0) {
+      const { data: audits, error: aErr } = await admin
+        .from("audit_log")
+        .select("entity_id")
+        .eq("empresa_id", empresaId)
+        .eq("action", "DOC_UPLOADED")
+        .in("entity_id", ids)
+
+      if (!aErr && Array.isArray(audits)) {
+        for (const a of audits) {
+          const id = (a as any)?.entity_id
+          if (typeof id === "string" && id.length > 10) uploadedOk.add(id)
+        }
+      }
+      // Se falhar, não bloqueia (padrão Moduz): só não marca como ok
+    }
+
+    const out = docs.map((d) => ({
+      ...d,
+      uploaded_ok: uploadedOk.has(d.id),
+    }))
+
     return NextResponse.json(
       {
         ok: true,
         empresa_id: empresaId,
-        docs: data ?? [],
+        docs: out,
       },
       { status: 200 }
     )
