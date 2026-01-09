@@ -54,7 +54,7 @@ async function assertAdmin(userId: string, empresaId: string): Promise<AdminChec
   return { ok: true, profileId: profile.id }
 }
 
-// validações leves (Moduz: sem “super regras”, mas evita lixo)
+// validações leves (Moduz: contrato pequeno, evita lixo)
 function normText(v: any, max = 40): string | null {
   if (v === null || v === undefined) return null
   const s = String(v).trim()
@@ -84,7 +84,6 @@ export async function POST(req: Request) {
 
     const adminCheck = await assertAdmin(user.id, empresaId)
     if (!adminCheck.ok) {
-      // ✅ Narrow explícito (evita erro TS no build)
       const deny = adminCheck as AdminCheckErr
       return NextResponse.json(
         { ok: false, error: deny.error, details: deny.details ?? null },
@@ -100,10 +99,7 @@ export async function POST(req: Request) {
     const currency = normText(body?.currency, 10)
     const extras = safeJsonObject(body?.extras)
 
-    // Nada pra atualizar?
-    const hasAny =
-      timezone !== null || locale !== null || currency !== null || extras !== null
-
+    const hasAny = timezone !== null || locale !== null || currency !== null || extras !== null
     if (!hasAny) {
       return NextResponse.json({ ok: false, error: "NO_CHANGES" }, { status: 400 })
     }
@@ -151,24 +147,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "DB_ERROR", details: upErr?.message ?? null }, { status: 500 })
     }
 
-    // audit_log best-effort (não bloqueia se falhar)
-    const profileOk = adminCheck as AdminCheckOk
-    await admin
-      .from("audit_log")
-      .insert({
-        empresa_id: empresaId,
-        actor_user_id: user.id,
-        actor_profile_id: profileOk.profileId,
-        action: "SETTINGS_UPDATED",
-        entity: "settings",
-        entity_table: "settings",
-        payload: { patch },
-        metadata: {},
-      })
-      .then(() => null)
-      .catch(() => null)
+    // audit_log best-effort (não bloqueia se falhar) — sem .catch (TS não aceita)
+    const ok = adminCheck as AdminCheckOk
+    const { error: auditErr } = await admin.from("audit_log").insert({
+      empresa_id: empresaId,
+      actor_user_id: user.id,
+      actor_profile_id: ok.profileId,
+      action: "SETTINGS_UPDATED",
+      entity: "settings",
+      entity_table: "settings",
+      payload: { patch },
+      metadata: {},
+    })
 
-    return NextResponse.json({ ok: true, settings: updated }, { status: 200 })
+    return NextResponse.json(
+      { ok: true, settings: updated, audit: auditErr ? "FAILED" : "OK", audit_details: auditErr?.message ?? null },
+      { status: 200 }
+    )
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: "UNEXPECTED", details: e?.message ?? String(e) },
