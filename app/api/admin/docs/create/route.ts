@@ -3,12 +3,13 @@
  * Moduz+ | API Admin
  * Arquivo: app/api/admin/docs/create/route.ts
  * Módulo: Docs
- * Etapa: Create (v1)
+ * Etapa: Create (v1.1 - vínculo semântico + path por módulo)
  * Descrição:
  *  - Autentica via Supabase SSR (cookies)
  *  - Valida membro ativo via public.profiles (empresa_id + user_id)
- *  - Cria registo em public.docs
+ *  - Cria registo em public.docs (inclui ref_table/ref_id quando fornecidos)
  *  - Gera Signed Upload URL (storage)
+ *  - Organiza storage_path por empresa + escopo (módulo/entidade)
  * =============================================
  */
 
@@ -32,7 +33,11 @@ function getEmpresaId(req: Request): string | null {
   return req.headers.get("x-empresa-id") || req.headers.get("X-Empresa-Id")
 }
 
-async function assertMember(userId: string, empresaId: string) {
+type MemberCheck =
+  | { ok: true; profileId: string; role: string }
+  | { ok: false; status: number; error: string; details?: string }
+
+async function assertMember(userId: string, empresaId: string): Promise<MemberCheck> {
   const admin = supabaseAdmin()
   const { data: profile, error } = await admin
     .from("profiles")
@@ -41,16 +46,34 @@ async function assertMember(userId: string, empresaId: string) {
     .eq("empresa_id", empresaId)
     .maybeSingle()
 
-  if (error) return { ok: false as const, status: 500, error: "PROFILE_LOOKUP_FAILED", details: error.message }
-  if (!profile || profile.ativo === false) return { ok: false as const, status: 403, error: "NO_PROFILE" }
-  return { ok: true as const, profileId: profile.id, role: profile.role as string }
+  if (error) return { ok: false, status: 500, error: "PROFILE_LOOKUP_FAILED", details: error.message }
+  if (!profile || profile.ativo === false) return { ok: false, status: 403, error: "NO_PROFILE" }
+
+  return { ok: true, profileId: profile.id, role: profile.role as string }
 }
 
 function safeFileName(name: string) {
   const base = (name || "documento").trim()
-  // simples e seguro: remove caminhos, normaliza espaços
   const just = base.split("/").pop()?.split("\\").pop() ?? "documento"
   return just.replace(/\s+/g, " ").slice(0, 180)
+}
+
+function safePathSegment(v: string) {
+  // segmento “path-safe”: sem barras, sem chars estranhos
+  const s = String(v || "").trim().toLowerCase()
+  const cleaned = s
+    .replace(/[/\\]/g, "-")
+    .replace(/[^a-z0-9._:-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+  return cleaned || "geral"
+}
+
+function safeUuidOrNull(v: any): string | null {
+  const s = String(v ?? "").trim()
+  // validação leve (não “bloqueia” UUIDs válidos)
+  if (!s || s.length < 20) return null
+  return s
 }
 
 export async function POST(req: Request) {
@@ -65,20 +88,33 @@ export async function POST(req: Request) {
 
     const member = await assertMember(user.id, empresaId)
     if (!member.ok) {
-      return NextResponse.json(
-        { ok: false, error: member.error, details: (member as any).details ?? null },
-        { status: member.status }
-      )
+      const err = "error" in member ? member.error : "UNEXPECTED"
+      const details = "details" in member ? (member.details ?? null) : null
+      const status = "status" in member ? member.status : 500
+      return NextResponse.json({ ok: false, error: err, details }, { status })
     }
 
     const body = await req.json().catch(() => null)
+
     const filename = safeFileName(String(body?.filename ?? "documento"))
     const mime_type = body?.mime_type ? String(body.mime_type) : null
     const size_bytes = body?.size_bytes ? Number(body.size_bytes) : null
 
+    // vínculo semântico (bónus)
+    const moduleKey = body?.module_key ? String(body.module_key).trim().toLowerCase() : null
+    const ref_table_raw = body?.ref_table != null ? String(body.ref_table).trim() : null
+    const ref_id = safeUuidOrNull(body?.ref_id)
+
+    // regra Moduz+: se veio module_key e não veio ref_table, usamos namespace module:<key>
+    const ref_table = ref_table_raw && ref_table_raw.length > 0 ? ref_table_raw : moduleKey ? `module:${moduleKey}` : null
+
     const docId = crypto.randomUUID()
     const bucket = "moduz-docs"
-    const storage_path = `empresa/${empresaId}/${docId}/${filename}`
+
+    // organização por “escopo” para ficar previsível no Storage
+    const scopeSeg = safePathSegment(ref_table ?? "geral")
+    const refSeg = safePathSegment(ref_id ?? "root")
+    const storage_path = `empresa/${empresaId}/${scopeSeg}/${refSeg}/${docId}/${filename}`
 
     const admin = supabaseAdmin()
 
@@ -87,6 +123,8 @@ export async function POST(req: Request) {
       .insert({
         id: docId,
         empresa_id: empresaId,
+        ref_table: ref_table,
+        ref_id: ref_id,
         storage_bucket: bucket,
         storage_path,
         filename: filename || null,
@@ -94,34 +132,13 @@ export async function POST(req: Request) {
         size_bytes,
         created_by: user.id,
       })
-      .select("id, empresa_id, storage_bucket, storage_path, created_at")
+      .select("id, empresa_id, ref_table, ref_id, storage_bucket, storage_path, created_at")
       .single()
 
     if (insErr || !doc) {
       return NextResponse.json({ ok: false, error: "DB_ERROR", details: insErr?.message ?? null }, { status: 500 })
     }
 
-    // ✅ Moduz: audit nunca pode quebrar o fluxo (sem .catch em builder)
-    const { error: auditErr } = await admin.from("audit_log").insert({
-      empresa_id: empresaId,
-      actor_user_id: user.id,
-      actor_profile_id: member.profileId,
-      action: "DOC_CREATED",
-      entity: "docs",
-      entity_table: "docs",
-      entity_id: docId,
-      payload: {
-        doc_id: docId,
-        storage_bucket: bucket,
-        storage_path,
-        filename: filename || null,
-        mime_type,
-        size_bytes,
-      },
-    })
-    void auditErr
-
-    // Signed Upload URL (não depende de policies)
     const { data: up, error: upErr } = await admin.storage.from(bucket).createSignedUploadUrl(storage_path)
     if (upErr || !up?.signedUrl || !up?.token) {
       return NextResponse.json(
