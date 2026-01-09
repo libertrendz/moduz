@@ -3,7 +3,7 @@
  * Moduz+ | API Admin
  * Arquivo: app/api/admin/core/audit/list/route.ts
  * Módulo: Core (Auditoria)
- * Etapa: List (v1.0.1)
+ * Etapa: List (v1.0.2)
  * Descrição:
  *  - Autentica via Supabase SSR (cookies)
  *  - Verifica perfil admin em public.profiles por empresa_id + user_id
@@ -32,9 +32,9 @@ function getEmpresaId(req: Request): string | null {
   return req.headers.get("x-empresa-id") || req.headers.get("X-Empresa-Id")
 }
 
-type AdminCheck =
-  | { ok: true; profileId: string }
-  | { ok: false; status: number; error: string; details?: string | null }
+type AdminCheckOk = { ok: true; profileId: string }
+type AdminCheckErr = { ok: false; status: number; error: string; details?: string | null }
+type AdminCheck = AdminCheckOk | AdminCheckErr
 
 async function assertAdmin(userId: string, empresaId: string): Promise<AdminCheck> {
   const admin = supabaseAdmin()
@@ -88,11 +88,13 @@ export async function GET(req: Request) {
     }
 
     const adminCheck = await assertAdmin(user.id, empresaId)
+
     if (!adminCheck.ok) {
-      // ✅ Narrow explícito (evita erro TS "Property 'error' does not exist...")
+      // ✅ Cast explícito (Moduz-safe): evita TS reclamar de ".error" em union
+      const deny = adminCheck as AdminCheckErr
       return NextResponse.json(
-        { ok: false, error: adminCheck.error, details: adminCheck.details ?? null },
-        { status: adminCheck.status }
+        { ok: false, error: deny.error, details: deny.details ?? null },
+        { status: deny.status }
       )
     }
 
@@ -128,6 +130,9 @@ export async function GET(req: Request) {
       { status: 200 }
     )
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: "UNEXPECTED", details: e?.message ?? String(e) }, { status: 500 })
+    return NextResponse.json(
+      { ok: false, error: "UNEXPECTED", details: e?.message ?? String(e) },
+      { status: 500 }
+    )
   }
 }
