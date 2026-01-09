@@ -3,7 +3,7 @@
  * Moduz+ | Module Guard
  * Arquivo: components/adm/module-guard.tsx
  * Módulo: Core (Admin)
- * Etapa: Guard por módulo (v1)
+ * Etapa: Guard por módulo (v1.0.1)
  * Descrição:
  *  - Impede acesso por URL directo a módulos não permitidos
  *  - Regras:
@@ -13,6 +13,8 @@
  *  - Redirecciona:
  *      - not_enabled -> /adm/core/modulos
  *      - not_implemented -> /adm
+ *  - Fix Moduz (boot):
+ *      - Não redirecciona durante loading inicial (evita refresh cair em /modulos)
  * =============================================
  */
 
@@ -75,9 +77,10 @@ function resolveModuleFromPath(pathname: string): ModuleKey | null {
 export function ModuleGuard(props: {
   empresaId: string | null
   enabledKeys: ModuleKey[]
+  loading?: boolean
   children: React.ReactNode
 }) {
-  const { empresaId, enabledKeys, children } = props
+  const { empresaId, enabledKeys, loading = false, children } = props
   const pathname = usePathname()
   const router = useRouter()
 
@@ -99,9 +102,21 @@ export function ModuleGuard(props: {
       return
     }
 
+    // ✅ Fix boot: enquanto ainda estamos a carregar contexto/módulos (ou sem empresa),
+    // não fazemos redirect (evita refresh cair em /adm/core/modulos por enabledKeys ainda "core-only").
+    if (loading || !empresaId) {
+      setAllowed(true)
+      return
+    }
+
     // Se não existir rota declarada no registry, não devia haver menu — mas por URL não deixa passar
     if (!ROUTES_BY_MODULE[moduleKey]) {
-      emitModuleDenied({ empresa_id: empresaId, module_key: moduleKey, reason: "not_implemented", pathname: pn })
+      emitModuleDenied({
+        empresa_id: empresaId,
+        module_key: moduleKey,
+        reason: "not_implemented",
+        pathname: pn,
+      })
       setAllowed(false)
       router.replace("/adm")
       return
@@ -110,7 +125,12 @@ export function ModuleGuard(props: {
     // Implementação no código (registry)
     const implemented = Boolean(MODULES[moduleKey]?.implemented)
     if (!implemented) {
-      emitModuleDenied({ empresa_id: empresaId, module_key: moduleKey, reason: "not_implemented", pathname: pn })
+      emitModuleDenied({
+        empresa_id: empresaId,
+        module_key: moduleKey,
+        reason: "not_implemented",
+        pathname: pn,
+      })
       setAllowed(false)
       router.replace("/adm")
       return
@@ -119,14 +139,19 @@ export function ModuleGuard(props: {
     // Enabled no DB (já vem do /api/admin/core/modules/list via AdmShell)
     const enabled = enabledKeys.includes(moduleKey)
     if (!enabled) {
-      emitModuleDenied({ empresa_id: empresaId, module_key: moduleKey, reason: "not_enabled", pathname: pn })
+      emitModuleDenied({
+        empresa_id: empresaId,
+        module_key: moduleKey,
+        reason: "not_enabled",
+        pathname: pn,
+      })
       setAllowed(false)
       router.replace("/adm/core/modulos")
       return
     }
 
     setAllowed(true)
-  }, [pathname, router, empresaId, enabledKeys])
+  }, [pathname, router, empresaId, enabledKeys, loading])
 
   if (!allowed) return null
   return <>{children}</>
