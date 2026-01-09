@@ -3,7 +3,7 @@
  * Moduz+ | API Admin
  * Arquivo: app/api/admin/core/audit/list/route.ts
  * Módulo: Core (Auditoria)
- * Etapa: List (v1)
+ * Etapa: List (v1.0.1)
  * Descrição:
  *  - Autentica via Supabase SSR (cookies)
  *  - Verifica perfil admin em public.profiles por empresa_id + user_id
@@ -32,9 +32,9 @@ function getEmpresaId(req: Request): string | null {
   return req.headers.get("x-empresa-id") || req.headers.get("X-Empresa-Id")
 }
 
-type AdminCheckOk = { ok: true; profileId: string }
-type AdminCheckFail = { ok: false; status: number; error: string; details?: string | null }
-type AdminCheck = AdminCheckOk | AdminCheckFail
+type AdminCheck =
+  | { ok: true; profileId: string }
+  | { ok: false; status: number; error: string; details?: string | null }
 
 async function assertAdmin(userId: string, empresaId: string): Promise<AdminCheck> {
   const admin = supabaseAdmin()
@@ -46,11 +46,24 @@ async function assertAdmin(userId: string, empresaId: string): Promise<AdminChec
     .eq("empresa_id", empresaId)
     .maybeSingle()
 
-  if (error) return { ok: false, status: 500, error: "PROFILE_LOOKUP_FAILED", details: error.message }
-  if (!profile || profile.ativo === false) return { ok: false, status: 403, error: "NO_PROFILE" }
-  if (profile.role !== "admin") return { ok: false, status: 403, error: "NOT_ADMIN" }
+  if (error) {
+    return {
+      ok: false as const,
+      status: 500,
+      error: "PROFILE_LOOKUP_FAILED",
+      details: error.message,
+    }
+  }
 
-  return { ok: true, profileId: profile.id }
+  if (!profile || profile.ativo === false) {
+    return { ok: false as const, status: 403, error: "NO_PROFILE" }
+  }
+
+  if (profile.role !== "admin") {
+    return { ok: false as const, status: 403, error: "NOT_ADMIN" }
+  }
+
+  return { ok: true as const, profileId: profile.id }
 }
 
 function clampInt(v: string | null, min: number, max: number, def: number) {
@@ -62,15 +75,21 @@ function clampInt(v: string | null, min: number, max: number, def: number) {
 export async function GET(req: Request) {
   try {
     const empresaId = getEmpresaId(req)
-    if (!empresaId) return NextResponse.json({ ok: false, error: "MISSING_EMPRESA_ID" }, { status: 400 })
+    if (!empresaId) {
+      return NextResponse.json({ ok: false, error: "MISSING_EMPRESA_ID" }, { status: 400 })
+    }
 
     const supabase = createSupabaseServerClient()
     const { data: userRes, error: userErr } = await supabase.auth.getUser()
     const user = userRes?.user
-    if (userErr || !user) return NextResponse.json({ ok: false, error: "MISSING_SESSION" }, { status: 401 })
+
+    if (userErr || !user) {
+      return NextResponse.json({ ok: false, error: "MISSING_SESSION" }, { status: 401 })
+    }
 
     const adminCheck = await assertAdmin(user.id, empresaId)
     if (!adminCheck.ok) {
+      // ✅ Narrow explícito (evita erro TS "Property 'error' does not exist...")
       return NextResponse.json(
         { ok: false, error: adminCheck.error, details: adminCheck.details ?? null },
         { status: adminCheck.status }
@@ -93,7 +112,6 @@ export async function GET(req: Request) {
       .limit(limit)
 
     if (cursor) {
-      // created_at < cursor (paginação)
       q = q.lt("created_at", cursor)
     }
 
@@ -103,7 +121,7 @@ export async function GET(req: Request) {
     }
 
     const rows = Array.isArray(data) ? data : []
-    const nextCursor = rows.length ? rows[rows.length - 1]?.created_at ?? null : null
+    const nextCursor = rows.length ? (rows[rows.length - 1] as any)?.created_at ?? null : null
 
     return NextResponse.json(
       { ok: true, empresa_id: empresaId, items: rows, next_cursor: nextCursor },
