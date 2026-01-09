@@ -3,12 +3,12 @@
  * Moduz+ | API Admin
  * Arquivo: app/api/admin/docs/list/route.ts
  * Módulo: Docs
- * Etapa: List (v1.1 - com vínculo/filtro)
+ * Etapa: List (v1.1.0)
  * Descrição:
  *  - Autentica via Supabase SSR (cookies)
  *  - Valida membro ativo via public.profiles (empresa_id + user_id)
  *  - Lista últimos 50 documentos da empresa (public.docs)
- *  - Filtros opcionais: ref_table, ref_id
+ *  - Moduz+: devolve uploaded_ok (true/false) baseado em audit_log (DOC_UPLOADED)
  * =============================================
  */
 
@@ -32,9 +32,9 @@ function getEmpresaId(req: Request): string | null {
   return req.headers.get("x-empresa-id") || req.headers.get("X-Empresa-Id")
 }
 
-type MemberCheck =
-  | { ok: true; profileId: string; role: string }
-  | { ok: false; status: number; error: string; details?: string }
+type MemberCheckOk = { ok: true; profileId: string; role: string }
+type MemberCheckErr = { ok: false; status: number; error: string; details?: string }
+type MemberCheck = MemberCheckOk | MemberCheckErr
 
 async function assertMember(userId: string, empresaId: string): Promise<MemberCheck> {
   const admin = supabaseAdmin()
@@ -51,6 +51,19 @@ async function assertMember(userId: string, empresaId: string): Promise<MemberCh
   return { ok: true, profileId: profile.id, role: profile.role as string }
 }
 
+type DocOut = {
+  id: string
+  empresa_id: string
+  storage_bucket: string
+  storage_path: string
+  filename: string | null
+  mime_type: string | null
+  size_bytes: number | null
+  created_by: string | null
+  created_at: string
+  uploaded_ok: boolean
+}
+
 export async function GET(req: Request) {
   try {
     const empresaId = getEmpresaId(req)
@@ -63,42 +76,61 @@ export async function GET(req: Request) {
 
     const member = await assertMember(user.id, empresaId)
     if (!member.ok) {
-      const err = "error" in member ? member.error : "UNEXPECTED"
-      const details = "details" in member ? (member.details ?? null) : null
-      const status = "status" in member ? member.status : 500
-      return NextResponse.json({ ok: false, error: err, details }, { status })
+      return NextResponse.json(
+        { ok: false, error: member.error, details: member.details ?? null },
+        { status: member.status }
+      )
     }
-
-    const url = new URL(req.url)
-    const ref_table = url.searchParams.get("ref_table")
-    const ref_id = url.searchParams.get("ref_id")
 
     const admin = supabaseAdmin()
 
-    let q = admin
+    // 1) docs (últimos 50)
+    const { data: docs, error: dErr } = await admin
       .from("docs")
-      .select(
-        "id, empresa_id, ref_table, ref_id, storage_bucket, storage_path, filename, mime_type, size_bytes, created_by, created_at"
-      )
+      .select("id, empresa_id, storage_bucket, storage_path, filename, mime_type, size_bytes, created_by, created_at")
       .eq("empresa_id", empresaId)
+      .order("created_at", { ascending: false })
+      .limit(50)
 
-    if (ref_table) q = q.eq("ref_table", ref_table)
-    if (ref_id) q = q.eq("ref_id", ref_id)
-
-    const { data, error } = await q.order("created_at", { ascending: false }).limit(50)
-
-    if (error) {
-      return NextResponse.json({ ok: false, error: "DB_ERROR", details: error.message }, { status: 500 })
+    if (dErr) {
+      return NextResponse.json({ ok: false, error: "DB_ERROR", details: dErr.message }, { status: 500 })
     }
 
-    return NextResponse.json(
-      {
-        ok: true,
-        empresa_id: empresaId,
-        docs: data ?? [],
-      },
-      { status: 200 }
-    )
+    const rows = Array.isArray(docs) ? docs : []
+    const ids = rows.map((d: any) => d?.id).filter(Boolean) as string[]
+
+    // 2) audit -> quais docs têm "complete" (DOC_UPLOADED)
+    const uploadedSet = new Set<string>()
+    if (ids.length > 0) {
+      const { data: audits, error: aErr } = await admin
+        .from("audit_log")
+        .select("entity_id")
+        .eq("empresa_id", empresaId)
+        .eq("action", "DOC_UPLOADED")
+        .in("entity_id", ids)
+
+      if (!aErr && Array.isArray(audits)) {
+        for (const a of audits) {
+          const id = (a as any)?.entity_id
+          if (id) uploadedSet.add(String(id))
+        }
+      }
+    }
+
+    const out: DocOut[] = rows.map((d: any) => ({
+      id: d.id,
+      empresa_id: d.empresa_id,
+      storage_bucket: d.storage_bucket,
+      storage_path: d.storage_path,
+      filename: d.filename ?? null,
+      mime_type: d.mime_type ?? null,
+      size_bytes: typeof d.size_bytes === "number" ? d.size_bytes : d.size_bytes ?? null,
+      created_by: d.created_by ?? null,
+      created_at: d.created_at,
+      uploaded_ok: uploadedSet.has(String(d.id)),
+    }))
+
+    return NextResponse.json({ ok: true, empresa_id: empresaId, docs: out }, { status: 200 })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: "UNEXPECTED", details: e?.message ?? String(e) }, { status: 500 })
   }
