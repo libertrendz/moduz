@@ -3,11 +3,15 @@
  * Moduz+ | Docs
  * Arquivo: app/adm/docs/page.tsx
  * Módulo: Docs
- * Etapa: MVP Upload (v1.0.2)
+ * Etapa: MVP Upload (v1.0.3)
  * Descrição:
  *  - Upload via Signed Upload URL (server-side) -> não depende de policies no bucket
  *  - Cria registo em public.docs + finaliza metadados + audit_log
  *  - Lista histórico (últimos 50) via /api/admin/docs/list
+ *  - UX Moduz:
+ *      - "Estado" não depende só da sessão (usa histórico quando existe)
+ *      - Mostra resumo e status por linha (quando disponível)
+ *      - Detalhes técnicos (doc_id/path) colapsáveis
  *  - Hard rule Moduz: não explodir UI por ENV ausente (mostrar erro controlado)
  * =============================================
  */
@@ -46,6 +50,13 @@ type DocRow = {
   size_bytes: number | null
   created_by: string | null
   created_at: string
+
+  /**
+   * Opcional (padrão Moduz+):
+   * - se o endpoint /api/admin/docs/list devolver uploaded_ok, a UI mostra status por linha.
+   * - se não devolver, a UI mantém compatibilidade sem quebrar.
+   */
+  uploaded_ok?: boolean | null
 }
 
 type ListResp =
@@ -79,6 +90,16 @@ function formatDt(v: string) {
   } catch {
     return v
   }
+}
+
+function cls(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ")
+}
+
+function statusLabel(v: boolean | null | undefined) {
+  if (v === true) return "OK"
+  if (v === false) return "Pendente"
+  return "—"
 }
 
 export default function DocsHomePage() {
@@ -143,7 +164,8 @@ export default function DocsHomePage() {
         return
       }
 
-      setDocs(Array.isArray(j.docs) ? j.docs : [])
+      const arr = Array.isArray(j.docs) ? j.docs : []
+      setDocs(arr)
     } catch (e: any) {
       setDocs([])
       setListErr(e?.message || "Erro inesperado ao carregar histórico.")
@@ -156,7 +178,7 @@ export default function DocsHomePage() {
     if (!file) return
 
     if (!supabase) {
-      showToast({ kind: "err", msg: "Configuração Supabase (public) ausente. Verifique envs na Vercel." })
+      showToast({ kind: "err", msg: "Configuração Supabase (pública) ausente. Verifique envs na Vercel." })
       return
     }
 
@@ -247,6 +269,52 @@ export default function DocsHomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // “Estado” (padrão Moduz): prioriza a sessão, mas cai para o histórico quando existe.
+  const estado = useMemo(() => {
+    if (last) {
+      return {
+        mode: "sessao" as const,
+        filename: last.filename,
+        size_bytes: last.size_bytes,
+        created_at: last.created_at,
+        doc_id: last.doc_id,
+        storage_bucket: last.storage_bucket,
+        storage_path: last.storage_path,
+        uploaded_ok: true as boolean | null,
+      }
+    }
+
+    const first = docs[0]
+    if (first) {
+      return {
+        mode: "historico" as const,
+        filename: first.filename ?? "sem nome",
+        size_bytes: first.size_bytes ?? 0,
+        created_at: first.created_at,
+        doc_id: first.id,
+        storage_bucket: first.storage_bucket,
+        storage_path: first.storage_path,
+        uploaded_ok: first.uploaded_ok ?? null,
+      }
+    }
+
+    return null
+  }, [last, docs])
+
+  const resumo = useMemo(() => {
+    const total = docs.length
+    const hasStatus = docs.some((d) => typeof d.uploaded_ok === "boolean")
+    if (!total || !hasStatus) return { total, ok: null as number | null, pendente: null as number | null }
+
+    let ok = 0
+    let pendente = 0
+    for (const d of docs) {
+      if (d.uploaded_ok === true) ok++
+      if (d.uploaded_ok === false) pendente++
+    }
+    return { total, ok, pendente }
+  }, [docs])
+
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6">
       <div className="flex items-start justify-between gap-4">
@@ -297,29 +365,73 @@ export default function DocsHomePage() {
         </div>
       ) : null}
 
+      {/* Estado (Moduz+) */}
       <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950 p-4">
-        <p className="text-sm text-slate-300">Estado</p>
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-sm text-slate-300">Estado</p>
 
-        {last ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            {resumo.total ? <span>Total: {resumo.total}</span> : <span>Sem documentos</span>}
+            {resumo.ok != null && resumo.pendente != null ? (
+              <>
+                <span className="text-slate-600">•</span>
+                <span>OK: {resumo.ok}</span>
+                <span className="text-slate-600">•</span>
+                <span>Pendentes: {resumo.pendente}</span>
+              </>
+            ) : null}
+          </div>
+        </div>
+
+        {estado ? (
           <div className="mt-3 text-sm text-slate-400">
             <div className="flex flex-col gap-1">
-              <div>
-                <span className="text-slate-300">Último upload:</span> {last.filename}{" "}
-                <span className="text-slate-500">({formatBytes(last.size_bytes)})</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-slate-300">
+                  {estado.mode === "sessao" ? "Último upload (sessão):" : "Último upload (histórico):"}
+                </span>
+
+                <span className="truncate">{estado.filename}</span>
+
+                <span className="text-slate-500">({formatBytes(estado.size_bytes)})</span>
+
+                <span
+                  className={cls(
+                    "ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]",
+                    estado.uploaded_ok === true && "border-emerald-900/60 bg-emerald-950/30 text-emerald-200",
+                    estado.uploaded_ok === false && "border-amber-900/60 bg-amber-950/30 text-amber-200",
+                    estado.uploaded_ok == null && "border-slate-800 bg-slate-950 text-slate-400"
+                  )}
+                  title="Estado do upload (quando disponível)"
+                >
+                  {statusLabel(estado.uploaded_ok)}
+                </span>
               </div>
-              <div className="font-mono text-xs text-slate-500">doc_id: {last.doc_id}</div>
-              <div className="font-mono text-xs text-slate-500">
-                {last.storage_bucket}:{last.storage_path}
-              </div>
+
+              <div className="text-xs text-slate-500">{formatDt(estado.created_at)}</div>
+
+              <details className="mt-2">
+                <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200">
+                  Detalhes técnicos
+                </summary>
+                <div className="mt-2 space-y-1">
+                  <div className="font-mono text-xs text-slate-500">doc_id: {estado.doc_id}</div>
+                  <div className="font-mono text-xs text-slate-500">
+                    {estado.storage_bucket}:{estado.storage_path}
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
         ) : (
           <p className="mt-2 text-sm text-slate-400">
-            Ainda não há uploads nesta sessão. Clique em <span className="text-slate-200">Upload</span>.
+            Ainda não existem documentos nesta empresa. Clique em{" "}
+            <span className="text-slate-200">Upload</span> para começar.
           </p>
         )}
       </div>
 
+      {/* Histórico */}
       <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950 p-4">
         <div className="flex items-center justify-between gap-4">
           <p className="text-sm text-slate-300">Histórico (últimos 50)</p>
@@ -338,29 +450,54 @@ export default function DocsHomePage() {
 
         {!listErr && docs.length > 0 ? (
           <ul className="mt-3 space-y-2">
-            {docs.map((d) => (
-              <li key={d.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm text-slate-100 truncate">
-                      {d.filename ?? <span className="text-slate-400">sem nome</span>}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500 font-mono truncate">doc_id: {d.id}</div>
-                    <div className="mt-1 text-xs text-slate-500 font-mono truncate">
-                      {d.storage_bucket}:{d.storage_path}
-                    </div>
-                  </div>
+            {docs.map((d) => {
+              const label = d.filename ?? "sem nome"
+              const st = typeof d.uploaded_ok === "boolean" ? d.uploaded_ok : null
 
-                  <div className="shrink-0 text-right">
-                    <div className="text-xs text-slate-400">{formatDt(d.created_at)}</div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {d.size_bytes ? formatBytes(d.size_bytes) : "—"}
+              return (
+                <li key={d.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="text-sm text-slate-100 truncate">{label}</div>
+
+                        <span
+                          className={cls(
+                            "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]",
+                            st === true && "border-emerald-900/60 bg-emerald-950/30 text-emerald-200",
+                            st === false && "border-amber-900/60 bg-amber-950/30 text-amber-200",
+                            st == null && "border-slate-800 bg-slate-950 text-slate-400"
+                          )}
+                          title="Estado do upload (quando disponível)"
+                        >
+                          {statusLabel(st)}
+                        </span>
+                      </div>
+
+                      <div className="mt-1 text-xs text-slate-500">
+                        {formatDt(d.created_at)}{" "}
+                        <span className="text-slate-600">•</span>{" "}
+                        {d.size_bytes ? formatBytes(d.size_bytes) : "—"}{" "}
+                        <span className="text-slate-600">•</span>{" "}
+                        {d.mime_type ?? "—"}
+                      </div>
+
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200">
+                          Detalhes
+                        </summary>
+                        <div className="mt-2 space-y-1">
+                          <div className="font-mono text-xs text-slate-500">doc_id: {d.id}</div>
+                          <div className="font-mono text-xs text-slate-500">
+                            {d.storage_bucket}:{d.storage_path}
+                          </div>
+                        </div>
+                      </details>
                     </div>
-                    <div className="mt-1 text-[11px] text-slate-500">{d.mime_type ?? "—"}</div>
                   </div>
-                </div>
-              </li>
-            ))}
+                </li>
+              )
+            })}
           </ul>
         ) : null}
       </div>
