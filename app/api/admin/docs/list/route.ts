@@ -3,12 +3,12 @@
  * Moduz+ | API Admin
  * Arquivo: app/api/admin/docs/list/route.ts
  * Módulo: Docs
- * Etapa: List (v1.0.1)
+ * Etapa: List (v1.1 - com vínculo/filtro)
  * Descrição:
  *  - Autentica via Supabase SSR (cookies)
  *  - Valida membro ativo via public.profiles (empresa_id + user_id)
  *  - Lista últimos 50 documentos da empresa (public.docs)
- *  - Enriquecimento Moduz (leve): marca uploaded_ok com base em audit_log (DOC_UPLOADED)
+ *  - Filtros opcionais: ref_table, ref_id
  * =============================================
  */
 
@@ -63,70 +63,39 @@ export async function GET(req: Request) {
 
     const member = await assertMember(user.id, empresaId)
     if (!member.ok) {
-      // Narrowing explícito (TS-safe)
       const err = "error" in member ? member.error : "UNEXPECTED"
       const details = "details" in member ? (member.details ?? null) : null
       const status = "status" in member ? member.status : 500
-
       return NextResponse.json({ ok: false, error: err, details }, { status })
     }
 
+    const url = new URL(req.url)
+    const ref_table = url.searchParams.get("ref_table")
+    const ref_id = url.searchParams.get("ref_id")
+
     const admin = supabaseAdmin()
 
-    const { data, error } = await admin
+    let q = admin
       .from("docs")
-      .select("id, empresa_id, storage_bucket, storage_path, filename, mime_type, size_bytes, created_by, created_at")
+      .select(
+        "id, empresa_id, ref_table, ref_id, storage_bucket, storage_path, filename, mime_type, size_bytes, created_by, created_at"
+      )
       .eq("empresa_id", empresaId)
-      .order("created_at", { ascending: false })
-      .limit(50)
+
+    if (ref_table) q = q.eq("ref_table", ref_table)
+    if (ref_id) q = q.eq("ref_id", ref_id)
+
+    const { data, error } = await q.order("created_at", { ascending: false }).limit(50)
 
     if (error) {
       return NextResponse.json({ ok: false, error: "DB_ERROR", details: error.message }, { status: 500 })
     }
 
-    const docs = (data ?? []) as Array<{
-      id: string
-      empresa_id: string
-      storage_bucket: string
-      storage_path: string
-      filename: string | null
-      mime_type: string | null
-      size_bytes: number | null
-      created_by: string | null
-      created_at: string
-    }>
-
-    // Enriquecer com uploaded_ok via audit_log (DOC_UPLOADED)
-    const ids = docs.map((d) => d.id).filter(Boolean)
-    const uploadedOk = new Set<string>()
-
-    if (ids.length > 0) {
-      const { data: audits, error: aErr } = await admin
-        .from("audit_log")
-        .select("entity_id")
-        .eq("empresa_id", empresaId)
-        .eq("action", "DOC_UPLOADED")
-        .in("entity_id", ids)
-
-      if (!aErr && Array.isArray(audits)) {
-        for (const a of audits) {
-          const id = (a as any)?.entity_id
-          if (typeof id === "string" && id.length > 10) uploadedOk.add(id)
-        }
-      }
-      // Se falhar, não bloqueia (padrão Moduz): só não marca como ok
-    }
-
-    const out = docs.map((d) => ({
-      ...d,
-      uploaded_ok: uploadedOk.has(d.id),
-    }))
-
     return NextResponse.json(
       {
         ok: true,
         empresa_id: empresaId,
-        docs: out,
+        docs: data ?? [],
       },
       { status: 200 }
     )
