@@ -3,7 +3,7 @@
  * Moduz+ | API Admin
  * Arquivo: app/api/admin/docs/list/route.ts
  * Módulo: Docs
- * Etapa: List (v1.1.0)
+ * Etapa: List (v1.1.1)
  * Descrição:
  *  - Autentica via Supabase SSR (cookies)
  *  - Valida membro ativo via public.profiles (empresa_id + user_id)
@@ -35,6 +35,10 @@ function getEmpresaId(req: Request): string | null {
 type MemberCheckOk = { ok: true; profileId: string; role: string }
 type MemberCheckErr = { ok: false; status: number; error: string; details?: string }
 type MemberCheck = MemberCheckOk | MemberCheckErr
+
+function isMemberErr(x: MemberCheck): x is MemberCheckErr {
+  return x.ok === false
+}
 
 async function assertMember(userId: string, empresaId: string): Promise<MemberCheck> {
   const admin = supabaseAdmin()
@@ -75,7 +79,7 @@ export async function GET(req: Request) {
     if (userErr || !user) return NextResponse.json({ ok: false, error: "MISSING_SESSION" }, { status: 401 })
 
     const member = await assertMember(user.id, empresaId)
-    if (!member.ok) {
+    if (isMemberErr(member)) {
       return NextResponse.json(
         { ok: false, error: member.error, details: member.details ?? null },
         { status: member.status }
